@@ -9,15 +9,19 @@ import os
 from utils import *
 
 
-def db_export(host, port, outdir='mydump'):
+def db_export(host, port, outdir='mydump', **kwargs):
     """Export database.
     """
     if not outdir:
         error('invalid outdir')
         return False
-
     # oplog mode is only supported on full dumps
-    cmd = 'mongodump --host %s --port %d --oplog --out %s' % (host, port, outdir)
+    username = kwargs.get('username')
+    password = kwargs.get('password')
+    if username and password:
+        cmd = 'mongodump --host %s --port %d --oplog --out %s -u %s -p %s' % (host, port, outdir, username, password)
+    else:
+        cmd = 'mongodump --host %s --port %d --oplog --out %s' % (host, port, outdir)
     res, out = run_command(cmd, log=True)
     if not res:
         error('%s failed' % cmd)
@@ -86,7 +90,7 @@ def db_import(host, port, db):
 def bson_dump(srcfile, dstfile):
     """convert BSON file into JSON file with human-readable formats.
     """
-    cmd = 'bsondump --type json %s > %s' % (srcfile, dstfile)
+    cmd = 'bsondump --type json %s | grep "^{" > %s' % (srcfile, dstfile)
     res, out = run_command(cmd, log=True)
     if not res:
         error('%s failed' % cmd)

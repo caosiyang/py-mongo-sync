@@ -13,9 +13,9 @@ import shutil
 import argparse
 from pymongo import MongoClient
 from pymongo.database import Database
-from bson.timestamp import Timestamp
 from utils import *
 from mongo_sync_utils import *
+from bson.timestamp import Timestamp
 
 
 class OplogParser:
@@ -25,7 +25,7 @@ class OplogParser:
 
 
 class MongoSynchronizer:
-    def __init__(self, src_host=None, src_port=None, dst_host=None, dst_port=None, dbs=[]):
+    def __init__(self, src_host=None, src_port=None, dst_host=None, dst_port=None, dbs=[], **kwargs):
         self.src_host = src_host
         self.src_port = src_port
         self.dst_host = dst_host
@@ -37,8 +37,13 @@ class MongoSynchronizer:
         assert self.dst_host
         assert self.dst_port
         assert self.dbs
+        self.username = kwargs.get('username')
+        self.password = kwargs.get('password')
         try:
             self.src_mc = MongoClient(self.src_host, self.src_port)
+            if self.username and self.password:
+                self.src_mc.admin.authenticate(self.username, self.password)
+                print 'auth with %s %s' % (self.username, self.password)
             self.dst_mc = MongoClient(self.dst_host, self.dst_port)
         except Exception, e:
             raise e
@@ -58,13 +63,17 @@ class MongoSynchronizer:
         assert self.last_optime
         print 'last optime: ', self.last_optime
 
-        #if not db_export(self.src_host, self.src_port):
-        #    error_exit('export data failed')
-        #print 'export data done'
+        if self.username and self.password:
+            res = db_export(self.src_host, self.src_port, username=self.username, password=self.password)
+        else:
+            res = db_export(self.src_host, self.src_port)
+        if not res:
+            error_exit('export data failed')
+        print 'export data done'
 
-        #if not db_import(self.dst_host, self.dst_port, self.dbs):
-        #    error_exit('import data failed')
-        #print 'import data done'
+        if not db_import(self.dst_host, self.dst_port, self.dbs):
+            error_exit('import data failed')
+        print 'import data done'
 
         # start running real-time synchronaztion
         self.oplog_sync()
@@ -179,26 +188,30 @@ def parse_args():
     parser.add_argument('--to', nargs='?', required=True, help='the destination mongo instance')
     parser.add_argument('--db', nargs='+', required=True, help='the names of databases to be synchronized')
     parser.add_argument('--oplog', action='store_true', help='enable continuous synchronization')
+    parser.add_argument('--username', nargs='?', required=False, help='username')
+    parser.add_argument('--password', nargs='?', required=False, help='password')
     args = vars(parser.parse_args())
     src_host = args['from'].split(':', 1)[0]
     src_port = int(args['from'].split(':', 1)[1])
     dst_host = args['to'].split(':', 1)[0]
     dst_port = int(args['to'].split(':', 1)[1])
     db = args['db']
+    username = args['username']
+    password = args['password']
     assert src_host
     assert src_port
     assert dst_host
     assert dst_port
     assert db
-    return src_host, src_port, dst_host, dst_port, db
+    return src_host, src_port, dst_host, dst_port, db, username, password
 
 
 def main():
     # parse and check arguments
-    src_host, src_port, dst_host, dst_port, db = parse_args()
+    src_host, src_port, dst_host, dst_port, db, username, password = parse_args()
 
     #syncer = MongoSynchronizer('servicecloud-test-dev09.qiyi.virtual', 27018, '127.0.0.1', 27017, db)
-    syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db)
+    syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db, username=username, password=password)
     syncer.run()
     sys.exit(0)
 
