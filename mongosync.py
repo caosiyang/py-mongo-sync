@@ -23,7 +23,6 @@ class OplogParser:
     def open(self):
         return True
 
-
 class MongoSynchronizer:
     def __init__(self, src_host=None, src_port=None, dst_host=None, dst_port=None, dbs=[], **kwargs):
         self.src_host = src_host
@@ -112,23 +111,25 @@ class MongoSynchronizer:
         db = self.src_mc['admin']
         rs_status = db.command({'replSetGetStatus': 1})
         members = rs_status.get('members')
-        if members:
-            for member in members:
-                role = member.get('stateStr')
-                if role == 'PRIMARY':
-                    optime = member.get('optime')
-                    if optime:
-                        return optime
-        else:
+        if not members:
             return None
+        for member in members:
+            role = member.get('stateStr')
+            if role == 'PRIMARY':
+                optime = member.get('optime')
+                return optime
 
     def oplog_sync(self):
         db = self.src_mc['local']
         coll = db['oplog.rs']
         cursor = coll.find({'ts': {'$gte': self.last_optime}}, tailable=True)
 
+        # make sure oplog is OK
+        if cursor.count == 0 or cursor[0]['ts'] != self.last_optime:
+            error('oplog is out of date')
+            return False
+
         n = 0
-        last_ts = self.last_optime
         while True:
             if not cursor.alive:
                 error('cursor is dead')
@@ -167,7 +168,8 @@ class MongoSynchronizer:
                             print 'db: %s' % dbname
                         elif op == 'n': # no-op
                             print 'no-op'
-                            pass
+                        else:
+                            print 'unknown command: %s' % oplog
                         # update local.qiyi.oplog
                         db = self.dst_mc['local']
                         coll = db['qiyi.mongosync_oplog']
@@ -178,7 +180,6 @@ class MongoSynchronizer:
                         error('apply oplog failed: %s' % oplog)
             except Exception, e:
                 time.sleep(0.1)
-
 
 def parse_args():
     """Parse and check arguments.
@@ -205,7 +206,6 @@ def parse_args():
     assert db
     return src_host, src_port, dst_host, dst_port, db, username, password
 
-
 def main():
     # parse and check arguments
     src_host, src_port, dst_host, dst_port, db, username, password = parse_args()
@@ -214,7 +214,6 @@ def main():
     syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db, username=username, password=password)
     syncer.run()
     sys.exit(0)
-
 
 if __name__ == '__main__':
     main()

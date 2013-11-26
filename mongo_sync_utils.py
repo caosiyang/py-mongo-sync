@@ -6,28 +6,44 @@
 # date: 2013/09/16
 
 import os
-from utils import *
+from utils import error
 
-
-def db_export(host, port, outdir='mydump', **kwargs):
-    """Export database.
+def db_dump(host, port, outdir='mydump', **kwargs):
+    """Dump database.
     """
     if not outdir:
-        error('invalid outdir')
+        error('invalid dump directory')
         return False
-    # oplog mode is only supported on full dumps
+    # oplog mode is only supported on full dumps --oplog
     username = kwargs.get('username')
     password = kwargs.get('password')
     if username and password:
-        cmd = 'mongodump --host %s --port %d --oplog --out %s -u %s -p %s' % (host, port, outdir, username, password)
+        cmd = 'mongodump --host %s --port %d --out %s --username %s --passport %s' % (host, port, outdir, username, password)
     else:
-        cmd = 'mongodump --host %s --port %d --oplog --out %s' % (host, port, outdir)
+        cmd = 'mongodump --host %s --port %d --out %s' % (host, port, outdir)
     res, out = run_command(cmd, log=True)
     if not res:
-        error('%s failed' % cmd)
+        error('dump database failed: %s' % cmd)
         return False
     return True
 
+def db_restore(host, port, dumpdir='mydump', **kwargs):
+    """Restore database.
+    """
+    if not dumpdir:
+        error('invalid dump directory')
+        return False
+    username = kwargs.get('username')
+    password = kwargs.get('password')
+    if username and password:
+        cmd = 'mongorestore --host %s --port %d --username %s --passport %s %s' % (host, port, username, password, dumpdir)
+    else:
+        cmd = 'mongorestore --host %s --port %d %s' % (host, port, dumpdir)
+    res, out = run_command(, log=True)
+    if not res:
+        error('restore database failed: %s' % cmd)
+        return False
+    return True
 
 def coll_import(host, port, db, coll, srcfile):
     """Import collection of database.
@@ -39,7 +55,6 @@ def coll_import(host, port, db, coll, srcfile):
         error('import %s.%s failed' % (db, coll))
         return False
     return True
-
 
 def db_import(host, port, db):
     """Import database.
@@ -80,9 +95,9 @@ def db_import(host, port, db):
     if os.path.exists(oplog_srcfile) and os.path.isfile(oplog_srcfile) and os.path.getsize(oplog_srcfile) > 0:
         oplog_dstfile = create_new_file('oplog.json')
         if not bson_dump(oplog_srcfile, oplog_dstfile):
-            error('bsondump %s %s failed' % (srcfile, dstfile))
+            error('bsondump %s %s failed' % (oplog_srcfile, oplog_dstfile))
             return False
-        print 'bsondump %s %s done' % (srcfile, dstfile)
+        print 'bsondump %s %s done' % (oplog_srcfile, oplog_dstfile)
 
     return True
 
