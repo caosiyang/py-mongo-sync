@@ -6,7 +6,7 @@
 # date: 2013/09/16
 
 import os
-from utils import error
+from utils import error, run_command
 
 def db_dump(host, port, outdir='mydump', **kwargs):
     """Dump database.
@@ -39,7 +39,7 @@ def db_restore(host, port, dumpdir='mydump', **kwargs):
         cmd = 'mongorestore --host %s --port %d --username %s --passport %s %s' % (host, port, username, password, dumpdir)
     else:
         cmd = 'mongorestore --host %s --port %d %s' % (host, port, dumpdir)
-    res, out = run_command(, log=True)
+    res, out = run_command(cmd, log=True)
     if not res:
         error('restore database failed: %s' % cmd)
         return False
@@ -49,7 +49,6 @@ def coll_import(host, port, db, coll, srcfile):
     """Import collection of database.
     """
     cmd = 'mongoimport --host %s --port %d --db %s --collection %s < %s' % (host, port, db, coll, srcfile)
-    print cmd
     res, out = run_command(cmd, log=True)
     if not res:
         error('import %s.%s failed' % (db, coll))
@@ -67,7 +66,6 @@ def db_import(host, port, db):
     else:
         error('unknown db argument')
         return False
-
     # convert BSON to JSON
     # and import to destination mongo instance
     db_json_files = []
@@ -81,15 +79,13 @@ def db_import(host, port, db):
                 if not bson_dump(collbsonfile, colljsonfile):
                     error('bsondump %s %s failed' % (collbsonfile, colljsonfile))
                     return False
-                print 'bsondump %s %s done' % (collbsonfile, colljsonfile)
+                info('bsondump %s %s done' % (collbsonfile, colljsonfile))
 
                 if not coll_import(host, port, dbname, collname, colljsonfile):
                     error('coll_import %s failed' % colljsonfile)
                     return False
 
         db_json_files.append(colljsonfile)
-
-
     # convert BSON to JSON for oplog
     oplog_srcfile = 'mydump/oplog.bson'
     if os.path.exists(oplog_srcfile) and os.path.isfile(oplog_srcfile) and os.path.getsize(oplog_srcfile) > 0:
@@ -97,10 +93,8 @@ def db_import(host, port, db):
         if not bson_dump(oplog_srcfile, oplog_dstfile):
             error('bsondump %s %s failed' % (oplog_srcfile, oplog_dstfile))
             return False
-        print 'bsondump %s %s done' % (oplog_srcfile, oplog_dstfile)
-
+        info('bsondump %s %s done' % (oplog_srcfile, oplog_dstfile))
     return True
-
 
 def bson_dump(srcfile, dstfile):
     """convert BSON file into JSON file with human-readable formats.
@@ -111,7 +105,6 @@ def bson_dump(srcfile, dstfile):
         error('%s failed' % cmd)
         return False
     return True
-
 
 def create_new_file(filename):
     """Create a empty file with specified filename.

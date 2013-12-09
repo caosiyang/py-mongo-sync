@@ -38,3 +38,4 @@ nosetests.xml
 #
 tags
 mydump/*
+format.py
