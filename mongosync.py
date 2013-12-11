@@ -13,10 +13,11 @@ import shutil
 import argparse
 from pymongo import MongoClient
 from pymongo.database import Database
-from utils import *
-from mongo_sync_utils import *
 from bson.timestamp import Timestamp
 import settings
+from utils import *
+from mongo_sync_utils import *
+from log import logger
 
 class MongoSynchronizer:
     """Mongodb synchronizer."""
@@ -27,7 +28,7 @@ class MongoSynchronizer:
         self.dst_host = dst_host # destination
         self.dst_port = dst_port # destination
         self.dbs = dbs[:] if dbs else None # default, all of databases
-        self.optime = None
+        self._optime = None
         assert self.src_host
         assert self.src_port
         assert self.dst_host
@@ -38,7 +39,7 @@ class MongoSynchronizer:
             self.src_mc = MongoClient(self.src_host, self.src_port)
             if self.username and self.password:
                 self.src_mc.admin.authenticate(self.username, self.password)
-                info('auth with %s %s' % (self.username, self.password))
+                logger.info('auth with %s %s' % (self.username, self.password))
             self.dst_mc = MongoClient(self.dst_host, self.dst_port)
         except Exception, e:
             raise e
@@ -55,10 +56,12 @@ class MongoSynchronizer:
             error_exit('failed to init mongosync config')
 
         if not self.is_optime_valid:
-            ts = self.get_src_optime()
-            info('current optime: %s' % ts)
+            ts = self.query_src_optime()
+            if not ts:
+                error_exit('failed to get source optime')
+            logger.info('current optime: %s' % ts)
 
-            info('dump database...')
+            logger.info('dump database...')
             if self.username and self.password:
                 res = db_dump(self.src_host, self.src_port, username=self.username, password=self.password)
             else:
@@ -69,14 +72,18 @@ class MongoSynchronizer:
             # TODO
             # drop databases
 
-            info('restore database...')
+            logger.info('restore database...')
             if not db_restore(self.dst_host, self.dst_port):
                 error_exit('restore database failed')
 
-            info('update optime...')
+            logger.info('update optime...')
             self.set_optime(ts)
 
-        info('start syncing...')
+        logger.info('start syncing...')
+        # oplog reapply maybe cause 'duplicate key' error
+        # the warning is used for user to know the reason
+        logger.warning('start syncing...')
+        logger.warning('optime: %s' % self.optime())
         self.oplog_sync()
 
     def load_config(self, filepath):
@@ -94,39 +101,39 @@ class MongoSynchronizer:
         cursor = coll.find({'_id': 'mongosync'})
         if cursor.count() == 0:
             coll.insert({'_id': 'mongosync', 'syncTo': source})
-            info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
+            logger.info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
         elif cursor.count() == 1:
             current_source = cursor[0].get('syncTo')
             if current_source:
                 if current_source != source:
-                    error('mongosync config conflicted, already syncTo: %s' % current_source)
+                    logger.error('mongosync config conflicted, already syncTo: %s' % current_source)
                     return False
             else:
                 coll.update({'_id': 'mongosync'}, {'$set': {'syncTo': source}})
-                info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
+                logger.info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
         elif cursor.count() > 1:
-            error('inconsistent mongosync config, too many items')
+            logger.error('inconsistent mongosync config, too many items')
             return False
 
         # TODO
         # create capped collection for store oplog
 
-        info('init mongosync config done')
+        logger.info('init mongosync config done')
         return True
 
     @property
     def is_optime_valid(self):
         """Check if the optime is out of date.
         """
-        optime = self.get_dst_optime()
+        optime = self.query_dst_optime()
         if optime:
             cursor = self.src_mc['local']['oplog.rs'].find({'ts': {'$lt': optime}})
             if cursor:
-                self.optime = optime
+                self._optime = optime
                 return True
         return False
 
-    def get_dst_optime(self):
+    def query_dst_optime(self):
         """Get optime of destination mongod.
         """
         ts = None
@@ -135,7 +142,7 @@ class MongoSynchronizer:
             ts = doc.get('optime')
         return ts
 
-    def get_src_optime(self):
+    def query_src_optime(self):
         """Get current optime of source mongod.
         """
         ts = None
@@ -150,18 +157,24 @@ class MongoSynchronizer:
                     break
         return ts
 
-    def set_optime(self, optime):
-        """Update optime to destination mongod.
+    def optime(self):
+        """Get optime of destination mongod.
         """
-        self.optime = optime
-        self.dst_mc['local']['qiyi_optime'].update({'_id': 'optime'}, {'$set': {'optime': self.optime}}, upsert=True)
+        return self._optime
+
+    def set_optime(self, optime):
+        """Set optime of destination mongod.
+        """
+        self.dst_mc['local']['qiyi_optime'].update({'_id': 'optime'}, {'$set': {'optime': self._optime}}, upsert=True)
+        self._optime = optime
 
     def oplog_sync(self):
-        cursor = self.src_mc['local']db['oplog.rs'].find({'ts': {'$gte': self.optime}}, tailable=True)
+        logger.info('oplog query...')
+        cursor = self.src_mc['local']['oplog.rs'].find({'ts': {'$gte': self._optime}}, tailable=True)
 
         # make sure of that the oplog is invalid
-        if cursor.count() == 0 or cursor[0]['ts'] != self.optime:
-            error('oplog of destination mongod is out of date')
+        if cursor.count() == 0 or cursor[0]['ts'] != self._optime:
+            logger.error('oplog of destination mongod is out of date')
             return False
 
         # skip the first oplog-entry
@@ -170,14 +183,14 @@ class MongoSynchronizer:
         n = 0
         while True:
             if not cursor.alive:
-                error('cursor is dead')
+                logger.error('cursor is dead')
                 break
             try:
                 oplog = cursor.next()
                 if oplog:
                     n += 1
-                    info(n)
-                    info('op: %s' % oplog['op'])
+                    logger.info(n)
+                    logger.info('op: %s' % oplog['op'])
                     # parse
                     ts = oplog['ts']
                     op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
@@ -186,36 +199,38 @@ class MongoSynchronizer:
                         dbname = ns.split('.', 1)[0]
                         db = self.dst_mc[dbname]
                         if op == 'i': # insert
-                            info('ns: %s' % ns)
+                            logger.info('ns: %s' % ns)
                             collname = ns.split('.', 1)[1]
                             coll = db[collname]
                             coll.insert(oplog['o'])
                         elif op == 'u': # update
-                            info('ns: %s' % ns)
+                            logger.info('ns: %s' % ns)
                             collname = ns.split('.', 1)[1]
                             coll = db[collname]
                             coll.update(oplog['o2'], oplog['o'])
                         elif op == 'd': # delete
-                            info('ns: %s' % ns)
+                            logger.info('ns: %s' % ns)
                             collname = ns.split('.', 1)[1]
                             coll = db[collname]
                             coll.remove(oplog['o'])
                         elif op == 'c': # command
-                            info('db: %s' % dbname)
+                            logger.info('db: %s' % dbname)
                             db.command(oplog['o'])
                         elif op == 'n': # no-op
-                            info('no-op')
+                            logger.info('no-op')
                         else:
-                            error('unknown command: %s' % oplog)
-                        # update local.qiyi.oplog
-                        db = self.dst_mc['local']
-                        coll = db['qiyi_mongosync_oplog']
-                        coll.insert(oplog, check_keys=False)
-                        info('apply oplog done: %s' % oplog)
-                        self.set_optime(ts)
+                            logger.error('unknown command: %s' % oplog)
+                        # no need to store
+                        # update local.qiyi_mongosync_oplog
+                        #self.dst_mc['local']['qiyi_mongosync_oplog'].insert(oplog, check_keys=False)
+                        logger.info('apply oplog done: %s' % oplog)
+
+                        # no need to update frequently
+                        if n % 100 == 0:
+                            self.set_optime(ts)
                     except Exception, e:
-                        error(e)
-                        error('apply oplog failed: %s' % oplog)
+                        logger.error(e)
+                        logger.error('apply oplog failed: %s' % oplog)
             except Exception, e:
                 time.sleep(0.1)
 
@@ -252,7 +267,9 @@ def main():
             settings.src_port,
             settings.dst_host,
             settings.dst_port,
-            None)
+            None,
+            username=settings.username,
+            password=settings.password)
     syncer.run()
     sys.exit(0)
 

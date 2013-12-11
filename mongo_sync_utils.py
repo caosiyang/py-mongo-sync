@@ -6,24 +6,25 @@
 # date: 2013/09/16
 
 import os
-from utils import error, run_command
+from utils import run_command
+from log import logger
 
 def db_dump(host, port, outdir='mydump', **kwargs):
     """Dump database.
     """
     if not outdir:
-        error('invalid dump directory')
+        logger.error('invalid dump directory')
         return False
     # oplog mode is only supported on full dumps --oplog
     username = kwargs.get('username')
     password = kwargs.get('password')
     if username and password:
-        cmd = 'mongodump --host %s --port %d --out %s --username %s --passport %s' % (host, port, outdir, username, password)
+        cmd = 'mongodump --host %s --port %d --out %s --username %s --password %s' % (host, port, outdir, username, password)
     else:
         cmd = 'mongodump --host %s --port %d --out %s' % (host, port, outdir)
     res, out = run_command(cmd, log=True)
     if not res:
-        error('dump database failed: %s' % cmd)
+        logger.error('dump database failed: %s' % cmd)
         return False
     return True
 
@@ -31,17 +32,17 @@ def db_restore(host, port, dumpdir='mydump', **kwargs):
     """Restore database.
     """
     if not dumpdir:
-        error('invalid dump directory')
+        logger.error('invalid dump directory')
         return False
     username = kwargs.get('username')
     password = kwargs.get('password')
     if username and password:
-        cmd = 'mongorestore --host %s --port %d --username %s --passport %s %s' % (host, port, username, password, dumpdir)
+        cmd = 'mongorestore --host %s --port %d --username %s --password %s %s' % (host, port, username, password, dumpdir)
     else:
         cmd = 'mongorestore --host %s --port %d %s' % (host, port, dumpdir)
     res, out = run_command(cmd, log=True)
     if not res:
-        error('restore database failed: %s' % cmd)
+        logger.error('restore database failed: %s' % cmd)
         return False
     return True
 
@@ -51,7 +52,7 @@ def coll_import(host, port, db, coll, srcfile):
     cmd = 'mongoimport --host %s --port %d --db %s --collection %s < %s' % (host, port, db, coll, srcfile)
     res, out = run_command(cmd, log=True)
     if not res:
-        error('import %s.%s failed' % (db, coll))
+        logger.error('import %s.%s failed' % (db, coll))
         return False
     return True
 
@@ -64,7 +65,7 @@ def db_import(host, port, db):
     elif isinstance(db, list):
         dbs = db[:]
     else:
-        error('unknown db argument')
+        logger.error('unknown db argument')
         return False
     # convert BSON to JSON
     # and import to destination mongo instance
@@ -77,12 +78,12 @@ def db_import(host, port, db):
                 collbsonfile = 'mydump/%s/%s' % (dbname, filename)
                 colljsonfile = create_new_file('%s.%s.json' % (dbname, collname))
                 if not bson_dump(collbsonfile, colljsonfile):
-                    error('bsondump %s %s failed' % (collbsonfile, colljsonfile))
+                    logger.error('bsondump %s %s failed' % (collbsonfile, colljsonfile))
                     return False
-                info('bsondump %s %s done' % (collbsonfile, colljsonfile))
+                logger.info('bsondump %s %s done' % (collbsonfile, colljsonfile))
 
                 if not coll_import(host, port, dbname, collname, colljsonfile):
-                    error('coll_import %s failed' % colljsonfile)
+                    logger.error('coll_import %s failed' % colljsonfile)
                     return False
 
         db_json_files.append(colljsonfile)
@@ -91,9 +92,9 @@ def db_import(host, port, db):
     if os.path.exists(oplog_srcfile) and os.path.isfile(oplog_srcfile) and os.path.getsize(oplog_srcfile) > 0:
         oplog_dstfile = create_new_file('oplog.json')
         if not bson_dump(oplog_srcfile, oplog_dstfile):
-            error('bsondump %s %s failed' % (oplog_srcfile, oplog_dstfile))
+            logger.error('bsondump %s %s failed' % (oplog_srcfile, oplog_dstfile))
             return False
-        info('bsondump %s %s done' % (oplog_srcfile, oplog_dstfile))
+        logger.info('bsondump %s %s done' % (oplog_srcfile, oplog_dstfile))
     return True
 
 def bson_dump(srcfile, dstfile):
@@ -102,7 +103,7 @@ def bson_dump(srcfile, dstfile):
     cmd = 'bsondump --type json %s | grep "^{" > %s' % (srcfile, dstfile)
     res, out = run_command(cmd, log=True)
     if not res:
-        error('%s failed' % cmd)
+        logger.error('%s failed' % cmd)
         return False
     return True
 

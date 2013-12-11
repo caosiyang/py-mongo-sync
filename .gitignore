@@ -37,5 +37,7 @@ nosetests.xml
 
 #
 tags
-mydump/*
+mydump
 format.py
+settings.py
+log
