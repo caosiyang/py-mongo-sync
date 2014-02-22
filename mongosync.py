@@ -11,28 +11,40 @@ import types
 import time
 import shutil
 import argparse
+import thread
 from pymongo import MongoClient
 from pymongo.database import Database
 from bson.timestamp import Timestamp
-import settings
 from utils import *
 from mongo_sync_utils import *
 from log import logger
+import settings
 
 class MongoSynchronizer:
-    """Mongodb synchronizer."""
-    def __init__(self, src_host=None, src_port=None, dst_host=None, dst_port=None, dbs=[], **kwargs):
+    """MongoDB synchronizer."""
+    def __init__(self,
+            src_host=None,
+            src_port=None,
+            dst_host=None,
+            dst_port=None,
+            buf_host=None,
+            buf_port=None,
+            dbnames=None,
+            **kwargs):
         """Constructor."""
         self.src_host = src_host # source
         self.src_port = src_port # source
         self.dst_host = dst_host # destination
         self.dst_port = dst_port # destination
-        self.dbs = dbs[:] if dbs else None # default, all of databases
-        self._optime = None
+        self.buf_host = buf_host # buffer
+        self.buf_port = buf_port # buffer
         assert self.src_host
         assert self.src_port
         assert self.dst_host
         assert self.dst_port
+        assert self.buf_host
+        assert self.buf_port
+        self._optime = None
         self.username = kwargs.get('username')
         self.password = kwargs.get('password')
         try:
@@ -41,13 +53,20 @@ class MongoSynchronizer:
                 self.src_mc.admin.authenticate(self.username, self.password)
                 logger.info('auth with %s %s' % (self.username, self.password))
             self.dst_mc = MongoClient(self.dst_host, self.dst_port)
-        except Exception, e:
+            self.buf_mc = MongoClient(self.buf_host, self.buf_port)
+        except Exception as e:
             raise e
+        if dbnames:
+            self.dbnames = dbnames[:]
+        else:
+            self.dbnames = self.source_dbnames()
+        assert self.dbnames
 
     def __del__(self):
         """Destructor."""
         self.src_mc.close()
         self.dst_mc.close()
+        self.buf_mc.close()
 
     def run(self):
         """Start synchronizing data.
@@ -86,6 +105,21 @@ class MongoSynchronizer:
         logger.warning('optime: %s' % self.optime())
         self.oplog_sync()
 
+    def database_sync(self):
+        """Start database sync."""
+        # create a thread for writing oplog to buffer-mongod
+        thread.start_new(self.oplog_backup, ())
+        time.sleep(10)
+        logger.info('dump databases...')
+        for dbname in self.dbnames:
+            if not db_dump(self.src_host, self.src_port, dbname):
+                error_exit('mongodump failed @%s' % dbname)
+        logger.info('restore databases...')
+        if not db_restore(self.dst_host, self.dst_port):
+            error_exit('mongorestore failed')
+        logger.info('synchronize data...')
+        self.all_oplog_sync()
+
     def load_config(self, filepath):
         """Load config.
         """
@@ -98,26 +132,19 @@ class MongoSynchronizer:
         source = '%s:%d' % (self.src_host, self.src_port)
         db = self.dst_mc['local']
         coll = db['qiyi_mongosync_config']
-        cursor = coll.find({'_id': 'mongosync'})
-        if cursor.count() == 0:
+        doc = coll.find_one({'_id': 'mongosync'})
+        if not doc:
             coll.insert({'_id': 'mongosync', 'syncTo': source})
             logger.info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
-        elif cursor.count() == 1:
-            current_source = cursor[0].get('syncTo')
-            if current_source:
+        else:
+            current_source = doc.get('syncTo')
+            if not current_source:
+                coll.update({'_id': 'mongosync'}, {'$set': {'syncTo': source}})
+                logger.info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
+            else:
                 if current_source != source:
                     logger.error('mongosync config conflicted, already syncTo: %s' % current_source)
                     return False
-            else:
-                coll.update({'_id': 'mongosync'}, {'$set': {'syncTo': source}})
-                logger.info('create mongosync config, syncTo %s:%d' % (self.src_host, self.src_port))
-        elif cursor.count() > 1:
-            logger.error('inconsistent mongosync config, too many items')
-            return False
-
-        # TODO
-        # create capped collection for store oplog
-
         logger.info('init mongosync config done')
         return True
 
@@ -168,12 +195,14 @@ class MongoSynchronizer:
         self.dst_mc['local']['qiyi_optime'].update({'_id': 'optime'}, {'$set': {'optime': self._optime}}, upsert=True)
         self._optime = optime
 
-    def oplog_sync(self):
+    def oplog_sync(self, dbname='local', collname='oplog.rs'):
+        """Apply oplog on destination mongod.
+        """
         logger.info('oplog query...')
         cursor = self.src_mc['local']['oplog.rs'].find({'ts': {'$gte': self._optime}}, tailable=True)
 
         # make sure of that the oplog is invalid
-        if cursor.count() == 0 or cursor[0]['ts'] != self._optime:
+        if not cursor or cursor[0]['ts'] != self.optime():
             logger.error('oplog of destination mongod is out of date')
             return False
 
@@ -234,6 +263,93 @@ class MongoSynchronizer:
             except Exception, e:
                 time.sleep(0.1)
 
+    def all_oplog_sync(self, dbname='mysync', collname='myoplog'):
+        """Apply oplog on destination mongod.
+        """
+        cursor = self.buf_mc[dbname][collname].find(tailable=True)
+        n = 0
+        while True:
+            if not cursor.alive:
+                logger.error('cursor is dead')
+                break
+            try:
+                oplog = cursor.next()
+                if oplog:
+                    n += 1
+                    logger.info(n)
+                    logger.info('op: %s' % oplog['op'])
+                    # parse
+                    ts = oplog['ts']
+                    op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
+                    ns = oplog['ns']
+                    try:
+                        dbname = ns.split('.', 1)[0]
+                        db = self.dst_mc[dbname]
+                        if op == 'i': # insert
+                            logger.info('ns: %s' % ns)
+                            collname = ns.split('.', 1)[1]
+                            coll = db[collname]
+                            coll.insert(oplog['o'])
+                        elif op == 'u': # update
+                            logger.info('ns: %s' % ns)
+                            collname = ns.split('.', 1)[1]
+                            coll = db[collname]
+                            coll.update(oplog['o2'], oplog['o'])
+                        elif op == 'd': # delete
+                            logger.info('ns: %s' % ns)
+                            collname = ns.split('.', 1)[1]
+                            coll = db[collname]
+                            coll.remove(oplog['o'])
+                        elif op == 'c': # command
+                            logger.info('db: %s' % dbname)
+                            db.command(oplog['o'])
+                        elif op == 'n': # no-op
+                            logger.info('no-op')
+                        else:
+                            logger.error('unknown command: %s' % oplog)
+                        logger.info('apply oplog done: %s' % oplog)
+                    except Exception, e:
+                        logger.error(e)
+                        logger.error('apply oplog failed: %s' % oplog)
+            except Exception, e:
+                time.sleep(0.1)
+
+    def oplog_backup(self):
+        """Backup oplog to buffer-mongod.
+        """
+        logger.info('oplog backuping...')
+        try:
+            # drop database if already exist
+            self.buf_mc.drop_database('mysync')
+            # create a capped collection
+            self.buf_mc['mysync'].create_collection('myoplog', capped=True, size=1024*1024*1024*10)
+
+            optime = self.query_src_optime()
+            print optime
+            cursor = self.src_mc['local']['oplog.rs'].find({'ts': {'$gte': optime}}, tailable=True)
+            if not cursor:
+                error_exit('[oplog-backup-thread] oplog not found')
+            while True:
+                if not cursor.alive:
+                    error_exit('[oplog-backup-thread] cursor is dead')
+                try:
+                    oplog = cursor.next()
+                    try: 
+                        self.buf_mc['mysync']['myoplog'].insert(oplog, check_keys=False)
+                    except Exception as e:
+                        print e
+                        raise e
+                except Exception as e:
+                    time.sleep(0.1)
+        except Exception as e:
+            print e
+            raise e
+
+    def source_dbnames(self):
+        """Get source database names.
+        """
+        return [dbname for dbname in self.src_mc.database_names() if dbname not in ['local', 'admin', 'config', 'test']]
+
 def parse_args():
     """Parse and check arguments.
     """
@@ -242,8 +358,8 @@ def parse_args():
     parser.add_argument('--to', nargs='?', required=True, help='the destination mongo instance')
     parser.add_argument('--db', nargs='+', required=False, help='the names of databases to be synchronized')
     parser.add_argument('--oplog', action='store_true', help='enable continuous synchronization')
-    parser.add_argument('--username', nargs='?', required=False, help='username')
-    parser.add_argument('--password', nargs='?', required=False, help='password')
+    parser.add_argument('-u, --username', nargs='?', required=False, help='username')
+    parser.add_argument('-p, --password', nargs='?', required=False, help='password')
     #parser.add_argument('--help', nargs='?', required=False, help='help information')
     args = vars(parser.parse_args())
     src_host = args['from'].split(':', 1)[0]
@@ -267,10 +383,13 @@ def main():
             settings.src_port,
             settings.dst_host,
             settings.dst_port,
-            None,
+            settings.buf_host,
+            settings.buf_port,
+            settings.dbnames,
             username=settings.username,
             password=settings.password)
-    syncer.run()
+    #syncer.run()
+    syncer.database_sync()
     sys.exit(0)
 
 if __name__ == '__main__':

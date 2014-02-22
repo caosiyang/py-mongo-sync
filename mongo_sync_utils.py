@@ -9,19 +9,27 @@ import os
 from utils import run_command
 from log import logger
 
-def db_dump(host, port, outdir='mydump', **kwargs):
+def db_dump(host, port, dbname,  outdir='mydump', **kwargs):
     """Dump database.
     """
     if not outdir:
         logger.error('invalid dump directory')
         return False
     # oplog mode is only supported on full dumps --oplog
+    cmd = ''
     username = kwargs.get('username')
     password = kwargs.get('password')
-    if username and password:
-        cmd = 'mongodump --host %s --port %d --out %s --username %s --password %s' % (host, port, outdir, username, password)
+    if dbname:
+        if username and password:
+            cmd = 'mongodump --host %s --port %d --db %s --out %s --username %s --password %s' % (host, port, dbname, outdir, username, password)
+        else:
+            cmd = 'mongodump --host %s --port %d --db %s --out %s' % (host, port, dbname, outdir)
     else:
-        cmd = 'mongodump --host %s --port %d --out %s' % (host, port, outdir)
+        if username and password:
+            cmd = 'mongodump --host %s --port %d --out %s --username %s --password %s' % (host, port, outdir, username, password)
+        else:
+            cmd = 'mongodump --host %s --port %d --out %s' % (host, port, outdir)
+
     res, out = run_command(cmd, log=True)
     if not res:
         logger.error('dump database failed: %s' % cmd)

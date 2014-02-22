@@ -19,6 +19,7 @@ formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
 
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setFormatter(formatter)
+stdout_handler.setLevel(logging.WARNING)
 rotating_file_handler = logging.handlers.RotatingFileHandler('log/info.log', mode='a', maxBytes=1024*1024*100, backupCount=10)
 rotating_file_handler.setFormatter(formatter)
 error_file_handler = logging.FileHandler('log/error.log', mode='a')

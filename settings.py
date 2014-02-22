@@ -1,16 +1,15 @@
 # source
-#src_host = 'servicecloud-test-dev09.qiyi.virtual'
-src_host = 'lego-mongodb-online01.qiyi.virtual'
-src_port = 27018
-src_repl_set = 'test'
-src_hosts = []
-username = 'lego'
-password = 'lego'
+src_host = ''
+src_port = 27017
+src_replset = ''
+username = ''
+password = ''
+dbnames = []
 
 # destination
-dst_host = 'passport-mongodb-online25-bjdx.qiyi.virtual'
+dst_host = ''
 dst_port = 27017
-dst_repl_set = None
+dst_replset = ''
 dst_hosts = []
 
 # oplog
@@ -18,3 +17,7 @@ dst_hosts = []
 optime_interval = 100
 
 # log
+
+# buffer-mongod to save oplog
+buf_host = ''
+buf_port = 27017
