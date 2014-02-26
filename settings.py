@@ -10,7 +10,6 @@ dbnames = []
 dst_host = ''
 dst_port = 27017
 dst_replset = ''
-dst_hosts = []
 
 # oplog
 # update optime once apply the specified count of oplog
@@ -21,3 +20,4 @@ optime_interval = 100
 # buffer-mongod to save oplog
 buf_host = ''
 buf_port = 27017
+capped_collection_size = 1024*1024*1024*10

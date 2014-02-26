@@ -11,13 +11,14 @@ import types
 import time
 import shutil
 import argparse
-import thread
+import threading
+import Queue
 from pymongo import MongoClient
 from pymongo.database import Database
 from bson.timestamp import Timestamp
 from utils import *
 from mongo_sync_utils import *
-from log import logger
+from logger import logger
 import settings
 
 class MongoSynchronizer:
@@ -52,15 +53,13 @@ class MongoSynchronizer:
             if self.username and self.password:
                 self.src_mc.admin.authenticate(self.username, self.password)
                 logger.info('auth with %s %s' % (self.username, self.password))
-            self.dst_mc = MongoClient(self.dst_host, self.dst_port)
+            self.dst_mc = MongoClient(self.dst_host, self.dst_port, w=0)
             self.buf_mc = MongoClient(self.buf_host, self.buf_port)
         except Exception as e:
             raise e
-        if dbnames:
-            self.dbnames = dbnames[:]
-        else:
-            self.dbnames = self.source_dbnames()
+        self.dbnames = dbnames[:] if dbnames else self.source_dbnames()
         assert self.dbnames
+        self.oplog_queue = Queue.Queue(10000)
 
     def __del__(self):
         """Destructor."""
@@ -108,7 +107,7 @@ class MongoSynchronizer:
     def database_sync(self):
         """Start database sync."""
         # create a thread for writing oplog to buffer-mongod
-        thread.start_new(self.oplog_backup, ())
+        threading.Thread(target=self.oplog_backup).start()
         time.sleep(10)
         logger.info('dump databases...')
         for dbname in self.dbnames:
@@ -118,7 +117,10 @@ class MongoSynchronizer:
         if not db_restore(self.dst_host, self.dst_port):
             error_exit('mongorestore failed')
         logger.info('synchronize data...')
-        self.all_oplog_sync()
+        # create a thread for putting oplog
+        threading.Thread(target=self.oplog_put).start()
+        # create a thread for getting oplog
+        threading.Thread(target=self.oplog_get).start()
 
     def load_config(self, filepath):
         """Load config.
@@ -263,56 +265,10 @@ class MongoSynchronizer:
             except Exception, e:
                 time.sleep(0.1)
 
-    def all_oplog_sync(self, dbname='mysync', collname='myoplog'):
-        """Apply oplog on destination mongod.
+    def source_dbnames(self):
+        """Get source database names.
         """
-        cursor = self.buf_mc[dbname][collname].find(tailable=True)
-        n = 0
-        while True:
-            if not cursor.alive:
-                logger.error('cursor is dead')
-                break
-            try:
-                oplog = cursor.next()
-                if oplog:
-                    n += 1
-                    logger.info(n)
-                    logger.info('op: %s' % oplog['op'])
-                    # parse
-                    ts = oplog['ts']
-                    op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
-                    ns = oplog['ns']
-                    try:
-                        dbname = ns.split('.', 1)[0]
-                        db = self.dst_mc[dbname]
-                        if op == 'i': # insert
-                            logger.info('ns: %s' % ns)
-                            collname = ns.split('.', 1)[1]
-                            coll = db[collname]
-                            coll.insert(oplog['o'])
-                        elif op == 'u': # update
-                            logger.info('ns: %s' % ns)
-                            collname = ns.split('.', 1)[1]
-                            coll = db[collname]
-                            coll.update(oplog['o2'], oplog['o'])
-                        elif op == 'd': # delete
-                            logger.info('ns: %s' % ns)
-                            collname = ns.split('.', 1)[1]
-                            coll = db[collname]
-                            coll.remove(oplog['o'])
-                        elif op == 'c': # command
-                            logger.info('db: %s' % dbname)
-                            db.command(oplog['o'])
-                        elif op == 'n': # no-op
-                            logger.info('no-op')
-                        else:
-                            logger.error('unknown command: %s' % oplog)
-                        logger.info('apply oplog done: %s' % oplog)
-                    except Exception, e:
-                        logger.error(e)
-                        logger.error('apply oplog failed: %s' % oplog)
-            except Exception, e:
-                time.sleep(0.1)
+        return [dbname for dbname in self.src_mc.database_names() if dbname not in ['local', 'admin', 'config', 'test']]
 
     def oplog_backup(self):
         """Backup oplog to buffer-mongod.
@@ -322,33 +278,90 @@ class MongoSynchronizer:
             # drop database if already exist
             self.buf_mc.drop_database('mysync')
             # create a capped collection
-            self.buf_mc['mysync'].create_collection('myoplog', capped=True, size=1024*1024*1024*10)
+            self.buf_mc['mysync'].create_collection('myoplog', capped=True, size=settings.capped_collection_size)
 
             optime = self.query_src_optime()
-            print optime
+            logger.info('optime: %s' % optime)
             cursor = self.src_mc['local']['oplog.rs'].find({'ts': {'$gte': optime}}, tailable=True)
             if not cursor:
-                error_exit('[oplog-backup-thread] oplog not found')
+                logger.error('[oplog-backup-thread] oplog not found')
+                return
             while True:
                 if not cursor.alive:
-                    error_exit('[oplog-backup-thread] cursor is dead')
+                    logger.error('[oplog-backup-thread] cursor is dead')
+                    break
                 try:
                     oplog = cursor.next()
                     try: 
                         self.buf_mc['mysync']['myoplog'].insert(oplog, check_keys=False)
                     except Exception as e:
-                        print e
+                        logger.error(e)
                         raise e
                 except Exception as e:
                     time.sleep(0.1)
         except Exception as e:
-            print e
+            logger.error(e)
             raise e
 
-    def source_dbnames(self):
-        """Get source database names.
+    def oplog_put(self):
+        """Put oplog into queue.
         """
-        return [dbname for dbname in self.src_mc.database_names() if dbname not in ['local', 'admin', 'config', 'test']]
+        n = 0
+        cursor = self.buf_mc['mysync']['myoplog'].find(tailable=True)
+        if not cursor:
+            logger.error('oplog not found')
+            return
+        while True:
+            if self.oplog_queue.full():
+                time.sleep(0.1)
+                continue
+            if not cursor.alive:
+                logger.error('oplog-cursor is dead')
+                break
+            try:
+                oplog = cursor.next()
+                if oplog:
+                    self.oplog_queue.put(oplog)
+                    n += 1
+                    if n % 10000 == 0:
+                        logger.info('put %d' % n)
+            except Exception as e:
+                time.sleep(0.1)
+
+    def oplog_get(self):
+        """Get oplog from queue and apply it.
+        """
+        n = 0
+        while True:
+            oplog = self.oplog_queue.get()
+            n += 1
+            # parse oplog
+            ts = oplog['ts']
+            op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
+            ns = oplog['ns']
+            try:
+                dbname = ns.split('.', 1)[0]
+                if op == 'i': # insert
+                    collname = ns.split('.', 1)[1]
+                    self.dst_mc[dbname][collname].insert(oplog['o'])
+                elif op == 'u': # update
+                    collname = ns.split('.', 1)[1]
+                    self.dst_mc[dbname][collname].update(oplog['o2'], oplog['o'])
+                elif op == 'd': # delete
+                    collname = ns.split('.', 1)[1]
+                    self.dst_mc[dbname][collname].remove(oplog['o'])
+                elif op == 'c': # command
+                    self.dst_mc[dbname].command(oplog['o'])
+                elif op == 'n': # no-op
+                    logger.info('no-op')
+                else:
+                    logger.error('unknown command: %s' % oplog)
+                if n % 10000 == 0:
+                    logger.info('get %d, ts: %s' % (n, ts))
+                #logger.info('%d\nop: %s\nns: %s\napply oplog: %s' % (n, op, ns, oplog))
+            except Exception as e:
+                logger.error(e)
+                logger.error('apply oplog failed: %s' % oplog)
 
 def parse_args():
     """Parse and check arguments.

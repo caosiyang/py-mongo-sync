@@ -7,7 +7,7 @@
 
 import os
 from utils import run_command
-from log import logger
+from logger import logger
 
 def db_dump(host, port, dbname,  outdir='mydump', **kwargs):
     """Dump database.
@@ -34,6 +34,7 @@ def db_dump(host, port, dbname,  outdir='mydump', **kwargs):
     if not res:
         logger.error('dump database failed: %s' % cmd)
         return False
+    logger.info(out)
     return True
 
 def db_restore(host, port, dumpdir='mydump', **kwargs):
@@ -52,6 +53,7 @@ def db_restore(host, port, dumpdir='mydump', **kwargs):
     if not res:
         logger.error('restore database failed: %s' % cmd)
         return False
+    logger.info(out)
     return True
 
 def coll_import(host, port, db, coll, srcfile):

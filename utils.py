@@ -7,7 +7,7 @@
 
 import sys
 import subprocess
-from log import logger
+from logger import logger
 
 def run_command(cmd, log=False):
     """Execute a shell command, print stdout and return status code.
