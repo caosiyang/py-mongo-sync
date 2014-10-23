@@ -1,23 +1,19 @@
-# source
-src_host = ''
-src_port = 27017
-src_replset = ''
+# use python for config now,
+# it may be improved later
+
+
+# source config
+# set a mongod instance of a replica set with the format like HOST:PORT
+src = 'localhost:27017'
+
+# username and password of source replica set
+# if no authentication, set them a empty string
 username = ''
 password = ''
-dbnames = []
 
-# destination
-dst_host = ''
-dst_port = 27017
-dst_replset = ''
 
-# oplog
-# update optime once apply the specified count of oplog
-optime_interval = 100
+# destination config
+# set a mongos or a standalone mongod or a mongod instance of a replica set with the format like HOST:PORT
+dst = 'localhost:27018'
 
-# log
-
-# buffer-mongod to save oplog
-buf_host = ''
-buf_port = 27017
-capped_collection_size = 1024*1024*1024*10
+# not support authentication for destination
