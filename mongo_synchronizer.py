@@ -84,9 +84,7 @@ class MongoSynchronizer:
         """
         collnames = self._src_mc[dbname].collection_names(include_system_collections=False)
         for collname in collnames:
-            if collname != 'qiyirc':
-                self._sync_collection(dbname, collname)
-            #self._sync_collection(dbname, collname)
+            self._sync_collection(dbname, collname)
 
     def _sync_collection(self, dbname, collname):
         """ Sync a collection.
