@@ -1,19 +1,27 @@
-# use python for config now,
-# it may be improved later
+# use python for config now, it may be improved later
 
 
-# source config
-# set a mongod instance of a replica set with the format like HOST:PORT
-src = 'localhost:27017'
-
-# username and password of source replica set
-# if no authentication, set them a empty string
-username = ''
-password = ''
+# hostportstr format:
+#   HOST:PORT
+# support:
+#   a.from single source to destination: src should be a string of a mongod uri in replica set
 
 
-# destination config
-# set a mongos or a standalone mongod or a mongod instance of a replica set with the format like HOST:PORT
-dst = 'localhost:27018'
+class Source:
+    """ Source config.
+    """
+    # single source
+    # set username and password empty if without authentication
+    hostportstr = ''
+    username = ''
+    password = ''
 
-# not support authentication for destination
+
+class Destination:
+    """ Destination config.
+    """
+    # set a mongos or a standalone mongod or a mongod instance of a replica set with the format like HOST:PORT
+    # set username and password empty if without authentication
+    hostportstr = ''
+    username = ''
+    password = ''

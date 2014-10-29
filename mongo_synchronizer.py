@@ -7,38 +7,48 @@ import pymongo
 import mongo_helper
 
 
-class MongoSynchronizer:
+class MongoSynchronizer(object):
     """ MongoDB synchronizer.
     """
     def __init__(self, src_hostportstr='', dst_hostportstr='', **kwargs):
         """ Constructor.
         """
-        self._username = kwargs.get('username')
-        self._password = kwargs.get('password')
+        self._src_username = kwargs.get('src_username')
+        self._src_password = kwargs.get('src_password')
+        self._dst_username = kwargs.get('dst_username')
+        self._dst_password = kwargs.get('dst_password')
+
+        self._src_mc = None
+        self._dst_mc = None
         self._optime = None
         self._oplog_queue = Queue.Queue()
         self._logger = logging.getLogger()
 
+        # init source mongo client
         self._src_mc = pymongo.MongoReplicaSetClient(src_hostportstr,
                 replicaSet=mongo_helper.get_replset_name(src_hostportstr),
                 read_preference=pymongo.read_preferences.ReadPreference.PRIMARY)
-        if self._username and self._password:
-            self._src_mc.admin.authenticate(self._username, self._password)
-            self._logger.info('auth with %s %s' % (self._username, self._password))
+        if self._src_username and self._src_password:
+            self._src_mc.admin.authenticate(self._src_username, self._src_password)
 
-        replset_name = mongo_helper.get_replset_name(dst_hostportstr)
-        if replset_name:
-            self._dst_mc = pymongo.MongoReplicaSetClient(dst_hostportstr, replicaSet=replset_name, w=0)
+        # init destination mongo client
+        dst_replset_name = mongo_helper.get_replset_name(dst_hostportstr)
+        if dst_replset_name:
+            self._dst_mc = pymongo.MongoReplicaSetClient(dst_hostportstr, replicaSet=dst_replset_name, w=0)
         else:
             host = dst_hostportstr.split(':')[0]
             port = int(dst_hostportstr.split(':')[1])
             self._dst_mc = pymongo.MongoClient(host, port, w=0)
+        if self._dst_username and self._dst_password:
+            self._dst_mc.admin.authenticate(self._dst_username, self._dst_password)
 
     def __del__(self):
         """ Destructor.
         """
-        self._src_mc.close()
-        self._dst_mc.close()
+        if self._src_mc:
+            self._src_mc.close()
+        if self._dst_mc:
+            self._dst_mc.close()
 
     def get_src_optime(self):
         """ Get current optime of source mongod.
@@ -58,17 +68,16 @@ class MongoSynchronizer:
     def sync_databases(self):
         """ Sync databases except admin and local.
         """
+        self._logger.info('sync databases...')
         dbnames = self._src_mc.database_names()
         for dbname in dbnames:
             if dbname not in ['admin', 'local']:
                 self._sync_database(dbname)
         self._logger.info('all databases done')
-        
 
     def _sync_database(self, dbname):
         """ Sync a database.
         """
-        self._logger.info('==== %s' % dbname)
         self._dst_mc.drop_database(dbname)
         # Q: Why create indexes first?
         # A: It may occured that create indexes failed after you have imported the data,
@@ -89,10 +98,10 @@ class MongoSynchronizer:
     def _sync_collection(self, dbname, collname):
         """ Sync a collection.
         """
-        self._logger.info('---- %s.%s' % (dbname, collname))
+        self._logger.info('>>>> %s.%s' % (dbname, collname))
         n = 0
         buf = []
-        buf_max_size = 2000
+        buf_max_size = 1000
         dst_coll = self._dst_mc[dbname][collname]
         cursor = self._src_mc[dbname][collname].find(spec=None, fileds={'_id': False}, snapshot=True, timeout=False)
         for doc in cursor:
@@ -101,11 +110,11 @@ class MongoSynchronizer:
                 dst_coll.insert(buf)
                 buf = []
             n += 1
-            if n % 100000 == 0:
-                self._logger.info(n)
+            if n % 10000 == 0:
+                self._logger.info('>> %d' % n)
         if len(buf) > 0:
             dst_coll.insert(buf)
-        self._logger.info(n)
+        self._logger.info('==== %s.%s %d' % (dbname, collname, n))
 
     def _sync_indexes(self, dbname):
         """ Create indexes.
@@ -265,9 +274,7 @@ class MongoSynchronizer:
         """
         try:
             self._optime = self.get_src_optime()
-            # sync databases
             self.sync_databases()
-            # sync oplog
             self.sync_oplog()
 
             ## if the data to sync is too big or oplogsize is small,

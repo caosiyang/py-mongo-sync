@@ -56,8 +56,13 @@ def main():
     logger = logging.getLogger()
     #src_host, src_port, dst_host, dst_port, db, username, password = parse_args()
     #syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db, username=username, password=password)
-    syncer = mongo_synchronizer.MongoSynchronizer(settings.src, settings.dst, username=settings.username, password=settings.password)
+
+    syncer = mongo_synchronizer.MongoSynchronizer(
+            settings.Source.hostportstr, settings.Destination.hostportstr,
+            src_username=settings.Source.username, src_password=settings.Source.password,
+            dst_username=settings.Destination.username, dst_password=settings.Destination.password)
     syncer.run()
+
     logger.info('exit')
 
 
