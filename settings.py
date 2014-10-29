@@ -4,17 +4,26 @@
 # hostportstr format:
 #   HOST:PORT
 # support:
-#   a.from single source to destination: src should be a string of a mongod uri in replica set
+#   a.single source
+#   b.multiple source
 
 
 class Source:
     """ Source config.
     """
     # single source
+    # source should be a mongod hostportstr of the replica set
     # set username and password empty if without authentication
     hostportstr = ''
     username = ''
     password = ''
+
+    # multiple source
+    # source should be a list in which the elements are mongod uris of different replica set
+    # set 'multiple' True and add mongod hostportstr of different replica sets into hostportstr_list
+    # not support authentication
+    multiple = False
+    hostportstr_list = []
 
 
 class Destination:

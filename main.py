@@ -9,6 +9,7 @@ import sys
 #import argparse
 import logging, logging.handlers
 import mongo_synchronizer
+import mongo_multi_source_synchronizer
 import settings
 
 
@@ -57,10 +58,16 @@ def main():
     #src_host, src_port, dst_host, dst_port, db, username, password = parse_args()
     #syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db, username=username, password=password)
 
-    syncer = mongo_synchronizer.MongoSynchronizer(
-            settings.Source.hostportstr, settings.Destination.hostportstr,
-            src_username=settings.Source.username, src_password=settings.Source.password,
-            dst_username=settings.Destination.username, dst_password=settings.Destination.password)
+    if settings.Source.multiple:
+        syncer = mongo_multi_source_synchronizer.MongoMultiSourceSynchronizer(
+                settings.Source.hostportstr_list, settings.Destination.hostportstr,
+                dst_username=settings.Destination.username, dst_password=settings.Destination.password)
+    else:
+        syncer = mongo_synchronizer.MongoSynchronizer(
+                settings.Source.hostportstr, settings.Destination.hostportstr,
+                src_username=settings.Source.username, src_password=settings.Source.password,
+                dst_username=settings.Destination.username, dst_password=settings.Destination.password)
+
     syncer.run()
 
     logger.info('exit')

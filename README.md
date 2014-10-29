@@ -8,12 +8,20 @@ MongoDB从源端到目标端的数据同步工具，同步过程包括一次全�
 源端是复制集成员，暂不支持Master/Slave；  
 目标端可以是mongos/mongod/复制集成员。
 
-## Usage
-1.edit setting.py to configure the source and destination  
-编辑setting.py，配置源端和目标端
+## Feature
+* real-time sync
+* support multiple source
+* support sync the specified databases and collections (TODO)
 
-2.run program  
-运行程序，执行main.py
-```
+## Usage 
+1. edit setting.py to configure
+ * source
+ * destination
+ * username (optional)
+ * password (optional)
+ * collection (optional)
+
+2. run program
+```python
 # python main.py
 ```
