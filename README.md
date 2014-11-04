@@ -11,7 +11,7 @@ MongoDB从源端到目标端的数据同步工具，同步过程包括一次全�
 ## Feature
 * real-time sync
 * support multiple source
-* support sync the specified databases and collections (TODO)
+* support sync the specified collections
 
 ## Usage 
 1. edit setting.py to configure
@@ -19,7 +19,8 @@ MongoDB从源端到目标端的数据同步工具，同步过程包括一次全�
  * destination
  * username (optional)
  * password (optional)
- * collection (optional)
+ * collections (optional)
+ * ingore indexes (optional)
 
 2. run program
 ```python
