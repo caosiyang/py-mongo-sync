@@ -5,6 +5,7 @@ import logging
 import exceptions
 import pymongo
 import mongo_helper
+import filter
 
 
 class MongoSynchronizer(object):
@@ -13,16 +14,23 @@ class MongoSynchronizer(object):
     def __init__(self, src_hostportstr='', dst_hostportstr='', **kwargs):
         """ Constructor.
         """
-        self._src_username = kwargs.get('src_username')
-        self._src_password = kwargs.get('src_password')
-        self._dst_username = kwargs.get('dst_username')
-        self._dst_password = kwargs.get('dst_password')
-
         self._src_mc = None
         self._dst_mc = None
         self._optime = None
         self._oplog_queue = Queue.Queue()
         self._logger = logging.getLogger()
+        self._filter = None
+
+        self._src_username = kwargs.get('src_username')
+        self._src_password = kwargs.get('src_password')
+        self._dst_username = kwargs.get('dst_username')
+        self._dst_password = kwargs.get('dst_password')
+        self._collections = kwargs.get('collections')
+        self._ignore_indexes = kwargs.get('ignore_indexes')
+
+        if self._collections:
+            self._filter = filter.CollectionFilter()
+            self._filter.add_target_collections(self._collections)
 
         # init source mongo client
         self._src_mc = pymongo.MongoReplicaSetClient(src_hostportstr,
@@ -72,13 +80,19 @@ class MongoSynchronizer(object):
         dbnames = self._src_mc.database_names()
         for dbname in dbnames:
             if dbname not in ['admin', 'local']:
+                if self._filter:
+                    if not self._filter.valid_database(dbname):
+                        continue
                 self._sync_database(dbname)
         self._logger.info('all databases done')
 
     def _sync_database(self, dbname):
         """ Sync a database.
         """
-        self._dst_mc.drop_database(dbname)
+        # never drop database automatically
+        # you should clear the databases by self if necessary
+        #self._dst_mc.drop_database(dbname)
+
         # Q: Why create indexes first?
         # A: It may occured that create indexes failed after you have imported the data,
         #    for example, when you create an unique index without 'dropDups' option and get a 'duplicate keys' error.
@@ -93,6 +107,9 @@ class MongoSynchronizer(object):
         """
         collnames = self._src_mc[dbname].collection_names(include_system_collections=False)
         for collname in collnames:
+            if self._filter:
+                if not self._filter.valid_collection('%s.%s' % (dbname, collname)):
+                    continue
             self._sync_collection(dbname, collname)
 
     def _sync_collection(self, dbname, collname):
@@ -127,8 +144,16 @@ class MongoSynchronizer(object):
                 index_list.append((fieldname, direction))
             return index_list
 
+        if self._ignore_indexes:
+            return
+
         for doc in self._src_mc[dbname]['system.indexes'].find():
             collname = doc['ns'].replace(dbname, '', 1)[1:]
+
+            if self._filter:
+                if not self._filter.valid_index('%s.%s' % (dbname, collname)):
+                    continue
+
             if 'expireAfterSeconds' in doc:
                 self._dst_mc[dbname][collname].create_index(index_parse(doc['key']),
                         unique=doc.get('unique', False),
@@ -169,7 +194,14 @@ class MongoSynchronizer(object):
                     if not cursor.alive:
                         self._logger.error('cursor is dead')
                         return
+
                     oplog = cursor.next()
+
+                    # validate oplog
+                    if self._filter:
+                        if not self._filter.valid_oplog(oplog):
+                            continue
+
                     # parse oplog
                     ts = oplog['ts']
                     op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'

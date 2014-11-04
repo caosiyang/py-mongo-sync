@@ -59,14 +59,19 @@ def main():
     #syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db, username=username, password=password)
 
     if settings.Source.multiple:
-        syncer = mongo_multi_source_synchronizer.MongoMultiSourceSynchronizer(
-                settings.Source.hostportstr_list, settings.Destination.hostportstr,
-                dst_username=settings.Destination.username, dst_password=settings.Destination.password)
+        syncer = mongo_multi_source_synchronizer.MongoMultiSourceSynchronizer(settings.Source.hostportstr_list, settings.Destination.hostportstr,
+                dst_username=settings.Destination.username,
+                dst_password=settings.Destination.password,
+                collections=settings.Source.collections,
+                ignore_indexes=settings.Source.ignore_indexes)
     else:
-        syncer = mongo_synchronizer.MongoSynchronizer(
-                settings.Source.hostportstr, settings.Destination.hostportstr,
-                src_username=settings.Source.username, src_password=settings.Source.password,
-                dst_username=settings.Destination.username, dst_password=settings.Destination.password)
+        syncer = mongo_synchronizer.MongoSynchronizer(settings.Source.hostportstr, settings.Destination.hostportstr,
+                src_username=settings.Source.username,
+                src_password=settings.Source.password,
+                dst_username=settings.Destination.username,
+                dst_password=settings.Destination.password,
+                collections=settings.Source.collections,
+                ignore_indexes=settings.Source.ignore_indexes)
 
     syncer.run()
 

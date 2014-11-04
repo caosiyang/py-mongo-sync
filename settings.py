@@ -1,4 +1,4 @@
-# use python for config now, it may be improved later
+# use Python for config, it may be improved later
 
 
 # hostportstr format:
@@ -24,6 +24,15 @@ class Source:
     # not support authentication
     multiple = False
     hostportstr_list = []
+
+    # specified collections to sync
+    # default is empty, indicates sync all data
+    # if not empty, sync the specified collections only
+    collections = []
+
+    # without creating indexes, default is False
+    # if True, ingore creating indexes
+    ignore_indexes = False
 
 
 class Destination:

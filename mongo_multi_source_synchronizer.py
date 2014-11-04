@@ -4,6 +4,7 @@ import threading
 import exceptions
 import pymongo
 import mongo_helper
+import filter
 
 class Source:
     def __init__(self):
@@ -16,16 +17,19 @@ class MongoMultiSourceSynchronizer(object):
     def __init__(self, src_hostportstr_list=[], dst_hostportstr='', **kwargs):
         """ Constructor.
         """
-        self._dst_username = kwargs.get('dst_username')
-        self._dst_password = kwargs.get('dst_password')
-
         self._src_mc_list = []
         self._dst_mc = None
         self._logger = logging.getLogger()
+        self._filter = None
 
-        if not src_hostportstr_list:
-            pass
-            #raise Exception('src_hostportstr_list is empty')
+        self._dst_username = kwargs.get('dst_username')
+        self._dst_password = kwargs.get('dst_password')
+        self._collections = kwargs.get('collections')
+        self._ignore_indexes = kwargs.get('ignore_indexes')
+
+        if self._collections:
+            self._filter = filter.CollectionFilter()
+            self._filter.add_target_collections(self._collections)
 
         # init source mongo clients
         for hostportstr in src_hostportstr_list:
@@ -33,6 +37,7 @@ class MongoMultiSourceSynchronizer(object):
                     replicaSet=mongo_helper.get_replset_name(hostportstr),
                     read_preference=pymongo.read_preferences.ReadPreference.PRIMARY)
             self._src_mc_list.append(mc)
+
         if not self._src_mc_list:
             raise Exception('source mongo client list is empty')
 
@@ -83,6 +88,9 @@ class MongoMultiSourceSynchronizer(object):
         dbnames = mc.database_names()
         for dbname in dbnames:
             if dbname not in ['admin', 'local']:
+                if self._filter:
+                    if not self._filter.valid_database(dbname):
+                        continue
                 self._sync_database(mc, dbname)
         self._logger.info('[%s] all databases done' % self._current_thread_name)
 
@@ -103,9 +111,10 @@ class MongoMultiSourceSynchronizer(object):
         """
         collnames = mc[dbname].collection_names(include_system_collections=False)
         for collname in collnames:
-            if collname != 'qiyirc':
-                self._sync_collection(mc, dbname, collname)
-            #self._sync_collection(mc, dbname, collname)
+            if self._filter:
+                if not self._filter.valid_collection('%s.%s' % (dbname, collname)):
+                    continue
+            self._sync_collection(mc, dbname, collname)
 
     def _sync_collection(self, mc, dbname, collname):
         """ Sync a collection.
@@ -139,8 +148,16 @@ class MongoMultiSourceSynchronizer(object):
                 index_list.append((fieldname, direction))
             return index_list
 
+        if self._ignore_indexes:
+            return
+
         for doc in mc[dbname]['system.indexes'].find():
             collname = doc['ns'].replace(dbname, '', 1)[1:]
+
+            if self._filter:
+                if not self._filter.valid_index('%s.%s' % (dbname, collname)):
+                    continue
+
             if 'expireAfterSeconds' in doc:
                 self._dst_mc[dbname][collname].create_index(index_parse(doc['key']),
                         unique=doc.get('unique', False),
@@ -178,7 +195,14 @@ class MongoMultiSourceSynchronizer(object):
                     if not cursor.alive:
                         self._logger.error('cursor is dead')
                         return
+
                     oplog = cursor.next()
+
+                    # validate oplog
+                    if self._filter:
+                        if not self._filter.valid_oplog(oplog):
+                            continue
+
                     # parse oplog
                     ts = oplog['ts']
                     op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
@@ -217,11 +241,14 @@ class MongoMultiSourceSynchronizer(object):
         """ Start data synchronization.
         """
         try:
-            # drop all databases that to sync
-            for mc in self._src_mc_list:
-                for dbname in mc.database_names():
-                    if dbname not in ['admin', 'local']:
-                        self._dst_mc.drop_database(dbname)
+            # never drop database automatically
+            # you should clear the databases by self if necessary
+            ## drop all databases that to sync
+            #for mc in self._src_mc_list:
+            #    for dbname in mc.database_names():
+            #        if dbname not in ['admin', 'local']:
+            #            self._dst_mc.drop_database(dbname)
+
             # sync data
             id = 1
             for mc in self._src_mc_list:
