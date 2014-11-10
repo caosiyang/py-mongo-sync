@@ -1,7 +1,7 @@
 import time
 import logging
-import threading
 import exceptions
+import multiprocessing
 import pymongo
 import mongo_helper
 import filter
@@ -84,7 +84,7 @@ class MongoMultiSourceSynchronizer(object):
     def _sync_databases(self, mc):
         """ Sync databases except admin and local.
         """
-        self._logger.info('[%s] sync databases...' % self._current_thread_name)
+        self._logger.info('[%s] sync databases...' % self._current_process_name)
         dbnames = mc.database_names()
         for dbname in dbnames:
             if dbname not in ['admin', 'local']:
@@ -92,7 +92,7 @@ class MongoMultiSourceSynchronizer(object):
                     if not self._filter.valid_database(dbname):
                         continue
                 self._sync_database(mc, dbname)
-        self._logger.info('[%s] all databases done' % self._current_thread_name)
+        self._logger.info('[%s] all databases done' % self._current_process_name)
 
     def _sync_database(self, mc, dbname):
         """ Sync a database.
@@ -119,7 +119,7 @@ class MongoMultiSourceSynchronizer(object):
     def _sync_collection(self, mc, dbname, collname):
         """ Sync a collection.
         """
-        self._logger.info('[%s] >>>> %s.%s' % (self._current_thread_name, dbname, collname))
+        self._logger.info('[%s] >>>> %s.%s' % (self._current_process_name, dbname, collname))
         n = 0 # counter
         buf = []
         buf_max_size = 1000
@@ -132,10 +132,10 @@ class MongoMultiSourceSynchronizer(object):
                 buf = []
             n += 1
             if n % 10000 == 0:
-                self._logger.info('[%s] >> %d' % (self._current_thread_name, n))
+                self._logger.info('[%s] >> %d' % (self._current_process_name, n))
         if len(buf) > 0:
             dst_coll.insert(buf)
-        self._logger.info('[%s] ==== %s.%s %d' % (self._current_thread_name, dbname, collname, n))
+        self._logger.info('[%s] ==== %s.%s %d' % (self._current_process_name, dbname, collname, n))
 
     def _sync_indexes(self, mc, dbname):
         """ Create indexes.
@@ -174,7 +174,7 @@ class MongoMultiSourceSynchronizer(object):
         """ Apply oplog.
         """
         try:
-            self._logger.info('[%s] sync oplog...' % self._current_thread_name)
+            self._logger.info('[%s] sync oplog...' % self._current_process_name)
 
             n = 0 # counter
             cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, tailable=True)
@@ -224,8 +224,8 @@ class MongoMultiSourceSynchronizer(object):
                     else:
                         self._logger.error('unknown command: %s' % oplog)
                     n += 1
-                    if n % 1000 == 0:
-                        self._logger.info('[%s] apply %d, ts: %s' % (self._current_thread_name, ts))
+                    if n % 10000 == 0:
+                        self._logger.info('[%s] apply %d, ts: %s' % (self._current_process_name, n, ts))
                 except Exception as e:
                     # there is no operation to apply, wait a moment
                     time.sleep(0.1)
@@ -234,8 +234,8 @@ class MongoMultiSourceSynchronizer(object):
             raise e
 
     @property
-    def _current_thread_name(self):
-        return threading.current_thread().name
+    def _current_process_name(self):
+        return multiprocessing.current_process().name
 
     def run(self):
         """ Start data synchronization.
@@ -243,27 +243,24 @@ class MongoMultiSourceSynchronizer(object):
         try:
             # never drop database automatically
             # you should clear the databases by self if necessary
-            ## drop all databases that to sync
-            #for mc in self._src_mc_list:
-            #    for dbname in mc.database_names():
-            #        if dbname not in ['admin', 'local']:
-            #            self._dst_mc.drop_database(dbname)
 
             # sync data
-            id = 1
+            processes = []
             for mc in self._src_mc_list:
                 oplog_start = self._get_current_optime(mc)
                 if not oplog_start:
                     raise Exception('oplog_start is None, sync terminated')
-                t = threading.Thread(target=self._sync, args=(mc, oplog_start))
-                t.setName('sync-thread-%d' % id)
-                t.setDaemon(True)
-                t.start()
-                id += 1
+                p = multiprocessing.Process(target=self._sync, args=(mc, oplog_start))
+                p.start()
+                processes.append(p)
             while True:
+                for p in processes:
+                    if not p.is_alive():
+                        self._logger.error('[%s] %s terminated' % (self._current_process_name, p.name))
                 time.sleep(10)
         except exceptions.KeyboardInterrupt:
             self._logger.info('terminating...')
         except Exception as e:
             self._logger.error(e)
             raise e
+
