@@ -177,11 +177,12 @@ class MongoSynchronizer(object):
             if not cursor:
                 self._logger.error('oplog not found')
                 return
+
             # verify oplog is healthy
             if cursor[0]['ts'] != self._optime:
-                self._logger.error('oplog is expired, oplog sync terminate...')
+                self._logger.error('oplog is stale, oplog sync terminate...')
                 return
-            self._logger.info('oplog is healthy')
+            self._logger.info('oplog is valid')
 
             # no matter actually
             # skip the first oplog-entry

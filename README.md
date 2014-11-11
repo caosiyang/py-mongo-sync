@@ -13,6 +13,9 @@ MongoDB从源端到目标端的数据同步工具，同步过程包括一次全�
 * support multiple source
 * support sync the specified collections
 
+## Requirement
+* source(s) should be one or more replica set
+
 ## Usage 
 1. edit setting.py to configure
  * source

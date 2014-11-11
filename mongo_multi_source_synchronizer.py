@@ -1,4 +1,5 @@
 import time
+import datetime
 import logging
 import exceptions
 import multiprocessing
@@ -84,7 +85,8 @@ class MongoMultiSourceSynchronizer(object):
     def _sync_databases(self, mc):
         """ Sync databases except admin and local.
         """
-        self._logger.info('[%s] sync databases...' % self._current_process_name)
+        host, port = mc.primary
+        self._logger.info('[%s] sync databases from %s:%d...' % (self._current_process_name, host, port))
         dbnames = mc.database_names()
         for dbname in dbnames:
             if dbname not in ['admin', 'local']:
@@ -174,17 +176,20 @@ class MongoMultiSourceSynchronizer(object):
         """ Apply oplog.
         """
         try:
-            self._logger.info('[%s] sync oplog...' % self._current_process_name)
+            host, port = mc.primary
+            self._logger.info('[%s] sync oplog from %s:%d...' % (self._current_process_name, host, port))
 
             n = 0 # counter
             cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, tailable=True)
             if not cursor:
                 self._logger.error('oplog not found')
                 return
+
             # verify oplog is healthy
             if cursor[0]['ts'] != oplog_start:
-                self._logger.error('oplog is stale, oplog-sync terminate.')
+                self._logger.error('[%s] oplog is stale, oplog-sync terminate.' % self._current_process_name)
                 return
+            self._logger.info('[%s] oplog is valid' % self._current_process_name)
 
             # no matter actually
             # skip the first oplog-entry
@@ -193,7 +198,7 @@ class MongoMultiSourceSynchronizer(object):
             while True:
                 try:
                     if not cursor.alive:
-                        self._logger.error('cursor is dead')
+                        self._logger.error('[%s] cursor is dead' % self._current_process_name)
                         return
 
                     oplog = cursor.next()
@@ -222,10 +227,10 @@ class MongoMultiSourceSynchronizer(object):
                     elif op == 'n': # no-op
                         self._logger.info('no-op')
                     else:
-                        self._logger.error('unknown command: %s' % oplog)
+                        self._logger.error('[%s] unknown command: %s' % (self._current_process_name, oplog))
                     n += 1
                     if n % 10000 == 0:
-                        self._logger.info('[%s] apply %d, ts: %s' % (self._current_process_name, n, ts))
+                        self._logger.info('[%s] apply %d, %s' % (self._current_process_name, n, datetime.datetime.fromtimestamp(ts.time)))
                 except Exception as e:
                     # there is no operation to apply, wait a moment
                     time.sleep(0.1)
@@ -257,7 +262,7 @@ class MongoMultiSourceSynchronizer(object):
                 for p in processes:
                     if not p.is_alive():
                         self._logger.error('[%s] %s terminated' % (self._current_process_name, p.name))
-                time.sleep(10)
+                time.sleep(60)
         except exceptions.KeyboardInterrupt:
             self._logger.info('terminating...')
         except Exception as e:
