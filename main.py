@@ -9,7 +9,6 @@ import sys
 #import argparse
 import logging, logging.handlers
 import mongo_synchronizer
-import mongo_multi_source_synchronizer
 import settings
 
 
@@ -34,7 +33,6 @@ def parse_args():
     password = args['password']
     return src_host, src_port, dst_host, dst_port, db, username, password
 
-
 def logger_init():
     """ Init logger for global.
     """
@@ -51,32 +49,19 @@ def logger_init():
     logger.addHandler(handler_stdout)
     logger.addHandler(handler_log)
 
-
 def main():
     logger_init()
     logger = logging.getLogger()
     #src_host, src_port, dst_host, dst_port, db, username, password = parse_args()
     #syncer = MongoSynchronizer(src_host, src_port, dst_host, dst_port, db, username=username, password=password)
 
-    if settings.Source.multiple:
-        syncer = mongo_multi_source_synchronizer.MongoMultiSourceSynchronizer(settings.Source.hostportstr_list, settings.Destination.hostportstr,
-                dst_username=settings.Destination.username,
-                dst_password=settings.Destination.password,
-                collections=settings.Source.collections,
-                ignore_indexes=settings.Source.ignore_indexes)
-    else:
-        syncer = mongo_synchronizer.MongoSynchronizer(settings.Source.hostportstr, settings.Destination.hostportstr,
-                src_username=settings.Source.username,
-                src_password=settings.Source.password,
-                dst_username=settings.Destination.username,
-                dst_password=settings.Destination.password,
-                collections=settings.Source.collections,
-                ignore_indexes=settings.Source.ignore_indexes)
-
+    syncer = mongo_synchronizer.MongoSynchronizer(settings.Source.hostportstr, settings.Destination.hostportstr,
+            dst_username=settings.Destination.username,
+            dst_password=settings.Destination.password,
+            collections=settings.Source.collections,
+            ignore_indexes=settings.Source.ignore_indexes)
     syncer.run()
-
     logger.info('exit')
-
 
 if __name__ == '__main__':
     main()

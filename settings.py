@@ -11,19 +11,10 @@
 class Source:
     """ Source config.
     """
-    # single source
-    # source should be a mongod hostportstr of the replica set
+    # source
+    # source should be one or more mongod hostportstr of the different replica sets
     # set username and password empty if without authentication
-    hostportstr = ''
-    username = ''
-    password = ''
-
-    # multiple source
-    # source should be a list in which the elements are mongod uris of different replica set
-    # set 'multiple' True and add mongod hostportstr of different replica sets into hostportstr_list
-    # not support authentication
-    multiple = False
-    hostportstr_list = []
+    hostportstr = []
 
     # specified collections to sync
     # default is empty, indicates sync all data
