@@ -20,11 +20,13 @@ class MongoSynchronizer(object):
         self._is_dst_mongos = False
         self._logger = logging.getLogger()
         self._filter = None
+        self._query = None
 
         self._dst_username = kwargs.get('dst_username')
         self._dst_password = kwargs.get('dst_password')
         self._collections = kwargs.get('collections')
         self._ignore_indexes = kwargs.get('ignore_indexes')
+        self._query = kwargs.get('query')
 
         if self._collections:
             self._filter = filter.CollectionFilter()
@@ -46,11 +48,11 @@ class MongoSynchronizer(object):
             raise Exception('destination hostportstr is empty')
         dst_replset_name = mongo_helper.get_replset_name(dst_hostportstr)
         if dst_replset_name:
-            self._dst_mc = pymongo.MongoReplicaSetClient(dst_hostportstr, replicaSet=dst_replset_name, w=0)
+            self._dst_mc = pymongo.MongoReplicaSetClient(dst_hostportstr, replicaSet=dst_replset_name, w=1)
         else:
             host = dst_hostportstr.split(':')[0]
             port = int(dst_hostportstr.split(':')[1])
-            self._dst_mc = pymongo.MongoClient(host, port, w=0)
+            self._dst_mc = pymongo.MongoClient(host, port, w=1)
         if self._dst_username and self._dst_password:
             self._dst_mc.admin.authenticate(self._dst_username, self._dst_password)
         if self._dst_mc.is_mongos:
@@ -121,14 +123,15 @@ class MongoSynchronizer(object):
         buf = []
         buf_max_size = 1000
         dst_coll = self._dst_mc[dbname][collname]
-        cursor = mc[dbname][collname].find(spec=None, fileds={'_id': False}, snapshot=True, timeout=False)
+        #cursor = mc[dbname][collname].find(spec=self._query, fileds={'_id': False}, snapshot=True, timeout=False)
+        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
         for doc in cursor:
             buf.append(doc)
             if len(buf) == buf_max_size:
                 dst_coll.insert(buf)
                 buf = []
             n += 1
-            if n % 10000 == 0:
+            if n % 1000 == 0:
                 self._logger.info('[%s] >> %d' % (self._current_process_name, n))
         if len(buf) > 0:
             dst_coll.insert(buf)
@@ -142,12 +145,13 @@ class MongoSynchronizer(object):
         ev = multiprocessing.Event()
         ev.clear()
         processes = []
-        for i in range(0, 8):
+        for i in range(0, 1):
             p = multiprocessing.Process(target=self._write_document, args=(dbname, collname, doc_q, ev))
             p.start()
             processes.append(p)
         n = 0
-        cursor = mc[dbname][collname].find(spec=None, fileds={'_id': False}, snapshot=True, timeout=False)
+        #cursor = mc[dbname][collname].find(spec=self._query, fileds={'_id': False}, snapshot=True, timeout=False)
+        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
         for doc in cursor:
             while doc_q.qsize() > 20000:
                 time.sleep(0.2) # wait subprocess consume
@@ -159,6 +163,7 @@ class MongoSynchronizer(object):
         for p in processes:
             p.join()
         self._logger.info('==== %s.%s %d' % (dbname, collname, n))
+        self._logger.info('==== qsize %d' % doc_q.qsize())
 
     def _write_document(self, dbname, collname, q, ev):
         """ Write document to destination in subprocess.
@@ -167,10 +172,18 @@ class MongoSynchronizer(object):
         while True:
             try:
                 doc = q.get(block=True, timeout=0.1)
-                self._dst_mc[dbname][collname].insert(doc)
+                #self._dst_mc[dbname][collname].insert(doc)
+                try:
+                    self._dst_mc[dbname][collname].save(doc)
+                except pymongo.errors.DuplicateKeyError as e:
+                    self._logger.error('>>>> %s' % e)
+                    self._logger.error(doc)
+                except Exception as e:
+                    self._logger.error('---- %s' % e)
                 n += 1
             except Queue.Empty:
                 if ev.is_set():
+                    self._logger.info('==== %s write %d' % (self._current_process_name, n))
                     sys.exit(0)
 
     def _sync_indexes(self, mc, dbname):
@@ -249,7 +262,16 @@ class MongoSynchronizer(object):
                     dbname = ns.split('.', 1)[0]
                     if op == 'i': # insert
                         collname = ns.split('.', 1)[1]
-                        self._dst_mc[dbname][collname].insert(oplog['o'])
+                        #self._dst_mc[dbname][collname].insert(oplog['o'])
+                        if 'uid' in oplog['o'] and oplog['o']['uid'].startswith('tv_'):
+                            self._dst_mc.write_concern['w'] = 1
+                            #self._dst_mc[dbname][collname].insert(oplog['o'])
+                            try:
+                                self._dst_mc[dbname][collname].save(oplog['o'])
+                            except Exception as e:
+                                self._logger.error(e)
+                            self._logger.info(oplog['o'])
+                            self._dst_mc.write_concern['w'] = 0
                     elif op == 'u': # update
                         collname = ns.split('.', 1)[1]
                         self._dst_mc[dbname][collname].update(oplog['o2'], oplog['o'])
