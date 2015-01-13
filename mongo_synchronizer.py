@@ -8,49 +8,46 @@ import Queue
 import pymongo
 import mongo_helper
 import filter
+from multiprocessing import Process
+from doc_writer import DocWriter
 
 class MongoSynchronizer(object):
     """ MongoDB multi-source synchronizer.
     """
-    def __init__(self, src_hostportstr=[], dst_hostportstr='', **kwargs):
+    def __init__(self, src_hostportstr, dst_hostportstr, **kwargs):
         """ Constructor.
         """
-        self._src_mc_list = []
+        if not src_hostportstr:
+            raise Exception('source hostportstr is empty')
+        if not dst_hostportstr:
+            raise Exception('destination hostportstr is empty')
+
+        self._src_mc = None
         self._dst_mc = None
         self._is_dst_mongos = False
-        self._logger = logging.getLogger()
         self._filter = None
+        self._query = None
+        self._logger = logging.getLogger()
 
         self._dst_username = kwargs.get('dst_username')
         self._dst_password = kwargs.get('dst_password')
         self._collections = kwargs.get('collections')
         self._ignore_indexes = kwargs.get('ignore_indexes')
+        self._query = kwargs.get('query')
 
         if self._collections:
             self._filter = filter.CollectionFilter()
             self._filter.add_target_collections(self._collections)
 
         # init source mongo clients
-        if not isinstance(src_hostportstr, list):
-            raise Exception('source hostportstr should be a list')
-        if not src_hostportstr:
-            raise Exception('source hostportstr is empty')
-        for hostportstr in src_hostportstr:
-            mc = pymongo.MongoReplicaSetClient(hostportstr,
-                    replicaSet=mongo_helper.get_replset_name(hostportstr),
-                    read_preference=pymongo.read_preferences.ReadPreference.PRIMARY)
-            self._src_mc_list.append(mc)
+        self._src_host = src_hostportstr.split(':')[0]
+        self._src_port = int(src_hostportstr.split(':')[1])
+        self._src_mc = mongo_helper.mongo_connect(self._src_host, self._src_port)
 
         # init destination mongo client
-        if not dst_hostportstr:
-            raise Exception('destination hostportstr is empty')
-        dst_replset_name = mongo_helper.get_replset_name(dst_hostportstr)
-        if dst_replset_name:
-            self._dst_mc = pymongo.MongoReplicaSetClient(dst_hostportstr, replicaSet=dst_replset_name, w=0)
-        else:
-            host = dst_hostportstr.split(':')[0]
-            port = int(dst_hostportstr.split(':')[1])
-            self._dst_mc = pymongo.MongoClient(host, port, w=0)
+        self._dst_host = dst_hostportstr.split(':')[0]
+        self._dst_port = int(dst_hostportstr.split(':')[1])
+        self._dst_mc = mongo_helper.mongo_connect(self._dst_host, self._dst_port)
         if self._dst_username and self._dst_password:
             self._dst_mc.admin.authenticate(self._dst_username, self._dst_password)
         if self._dst_mc.is_mongos:
@@ -59,8 +56,8 @@ class MongoSynchronizer(object):
     def __del__(self):
         """ Destructor.
         """
-        for mc in self._src_mc_list:
-            mc.close()
+        if self._src_mc:
+            self._src_mc.close()
         if self._dst_mc:
             self._dst_mc.close()
 
@@ -121,7 +118,7 @@ class MongoSynchronizer(object):
         buf = []
         buf_max_size = 1000
         dst_coll = self._dst_mc[dbname][collname]
-        cursor = mc[dbname][collname].find(spec=None, fileds={'_id': False}, snapshot=True, timeout=False)
+        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
         for doc in cursor:
             buf.append(doc)
             if len(buf) == buf_max_size:
@@ -134,6 +131,18 @@ class MongoSynchronizer(object):
             dst_coll.insert(buf)
         self._logger.info('[%s] ==== %s.%s %d' % (self._current_process_name, dbname, collname, n))
 
+    def _sync_collection_mp2(self, mc, dbname, collname):
+        dw = DocWriter(self._dst_host, self._dst_port, dbname, collname)
+        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
+        n = 0
+        for doc in cursor:
+            dw.write(doc)
+            n += 1
+            if n % 10000 == 0:
+                self._logger.info('[%s] >> %d' % (self._current_process_name, n))
+        dw.close()
+        self._logger.info('[%s] >> %d all done' % (self._current_process_name, n))
+
     def _sync_collection_mp(self, mc, dbname, collname):
         """ Sync a collection with multi-processes.
         """
@@ -142,14 +151,14 @@ class MongoSynchronizer(object):
         ev = multiprocessing.Event()
         ev.clear()
         processes = []
-        for i in range(0, 8):
+        for i in range(0, 4):
             p = multiprocessing.Process(target=self._write_document, args=(dbname, collname, doc_q, ev))
             p.start()
             processes.append(p)
         n = 0
-        cursor = mc[dbname][collname].find(spec=None, fileds={'_id': False}, snapshot=True, timeout=False)
+        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
         for doc in cursor:
-            while doc_q.qsize() > 20000:
+            while doc_q.qsize() > 10000:
                 time.sleep(0.2) # wait subprocess consume
             doc_q.put(doc)
             n += 1
@@ -159,6 +168,7 @@ class MongoSynchronizer(object):
         for p in processes:
             p.join()
         self._logger.info('==== %s.%s %d' % (dbname, collname, n))
+        self._logger.info('==== qsize %d' % doc_q.qsize())
 
     def _write_document(self, dbname, collname, q, ev):
         """ Write document to destination in subprocess.
@@ -167,10 +177,17 @@ class MongoSynchronizer(object):
         while True:
             try:
                 doc = q.get(block=True, timeout=0.1)
-                self._dst_mc[dbname][collname].insert(doc)
+                try:
+                    self._dst_mc[dbname][collname].save(doc)
+                except pymongo.errors.DuplicateKeyError as e:
+                    self._logger.error('>>>> %s' % e)
+                    self._logger.error(doc)
+                except Exception as e:
+                    self._logger.error('---- %s' % e)
                 n += 1
             except Queue.Empty:
                 if ev.is_set():
+                    self._logger.info('==== %s write %d' % (self._current_process_name, n))
                     sys.exit(0)
 
     def _sync_indexes(self, mc, dbname):
@@ -213,12 +230,10 @@ class MongoSynchronizer(object):
             host, port = mc.primary
             self._logger.info('[%s] sync oplog from %s:%d...' % (self._current_process_name, host, port))
 
-            n = 0 # counter
             cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, tailable=True)
             if not cursor:
                 self._logger.error('oplog not found')
                 return
-
             # verify oplog is healthy
             if cursor[0]['ts'] != oplog_start:
                 self._logger.error('[%s] oplog is stale, oplog-sync terminate.' % self._current_process_name)
@@ -229,12 +244,13 @@ class MongoSynchronizer(object):
             # skip the first oplog-entry
             #cursor.skip(1)
 
+            n = 0 # counter
+
             while True:
                 try:
                     if not cursor.alive:
                         self._logger.error('[%s] cursor is dead' % self._current_process_name)
                         return
-
                     oplog = cursor.next()
 
                     # validate oplog
@@ -249,7 +265,7 @@ class MongoSynchronizer(object):
                     dbname = ns.split('.', 1)[0]
                     if op == 'i': # insert
                         collname = ns.split('.', 1)[1]
-                        self._dst_mc[dbname][collname].insert(oplog['o'])
+                        self._dst_mc[dbname][collname].save(oplog['o'])
                     elif op == 'u': # update
                         collname = ns.split('.', 1)[1]
                         self._dst_mc[dbname][collname].update(oplog['o2'], oplog['o'])
@@ -279,20 +295,13 @@ class MongoSynchronizer(object):
     def run(self):
         """ Start data synchronization.
         """
-        try:
-            # never drop database automatically
-            # you should clear the databases by self if necessary
+        self._sync(self._src_mc)
 
-            processes = []
-            for mc in self._src_mc_list:
-                p = multiprocessing.Process(target=self._sync, args=(mc,))
-                p.start()
-                processes.append(p)
-            while True:
-                for p in processes:
-                    if not p.is_alive():
-                        self._logger.error('[%s] %s terminated' % (self._current_process_name, p.name))
-                time.sleep(60)
+        # never drop database automatically
+        # you should clear the databases by self if necessary
+
+        try:
+            self._sync(self._src_mc)
         except exceptions.KeyboardInterrupt:
             self._logger.info('terminating...')
         except Exception as e:
