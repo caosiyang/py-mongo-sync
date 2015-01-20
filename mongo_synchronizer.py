@@ -125,7 +125,7 @@ class MongoSynchronizer(object):
                 dst_coll.insert(buf)
                 buf = []
             n += 1
-            if n % 10000 == 0:
+            if n % 1000 == 0:
                 self._logger.info('[%s] >> %d' % (self._current_process_name, n))
         if len(buf) > 0:
             dst_coll.insert(buf)
