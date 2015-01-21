@@ -308,13 +308,14 @@ class MongoSynchronizer(object):
                         # TODO
                         # through unique index, delete old, insert new
                         self._logger.error(e)
-                        #self._logger.info(oplog)
+                        self._logger.error(oplog)
                         break
                     except pymongo.errors.AutoReconnect:
                         self._dst_mc = self.reconnect(self._dst_host, self._dst_port)
                     except Exception as e:
                         self._logger.error(e)
-                        raise e
+                        self._logger.error(oplog)
+                        break
 
             except StopIteration as e:
                 # there is no operation to apply, wait a moment
@@ -325,7 +326,6 @@ class MongoSynchronizer(object):
             except Exception as e:
                 self._logger.error(e)
                 raise e
-
 
     @property
     def _current_process_name(self):
