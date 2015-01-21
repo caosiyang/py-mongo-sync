@@ -1,6 +1,5 @@
 import pymongo
 
-
 def mongo_connect(host, port, **kwargs):
     """ Connect and return a available handler.
     default:

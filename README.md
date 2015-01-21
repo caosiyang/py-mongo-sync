@@ -22,7 +22,7 @@ MongoDB从源端到目标端的数据同步工具，同步过程包括全量数�
 
 ## Usage 
 
-```
+```bash
 # python main.py -h
 usage: main.py [-h] --from [FROM] --to [TO] [--db [DB]] [--coll [COLL]]
                [--query [QUERY]] [--log [LOG]]
