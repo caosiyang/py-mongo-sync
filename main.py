@@ -9,8 +9,8 @@ import sys
 import argparse
 import logging, logging.handlers
 import mongo_synchronizer
-import settings
 
+# global variables
 g_src = ''
 g_dst = ''
 g_db = ''
@@ -23,7 +23,7 @@ g_logfilepath = ''
 def parse_args():
     """ Parse arguments.
     """
-    parser = argparse.ArgumentParser(description='Sync data from a replica-set to another mongos/mongod instance.')
+    parser = argparse.ArgumentParser(description='Sync data from a replica-set to another mongod/replica-set/sharded-cluster.')
     parser.add_argument('--from', nargs='?', required=True, help='the source must be a mongod instance of replica-set')
     parser.add_argument('--to', nargs='?', required=True, help='the destionation should be a mongos or mongod instance')
     parser.add_argument('--db', nargs='?', required=False, help='the database to sync')
@@ -35,14 +35,17 @@ def parse_args():
     #parser.add_argument('--oplog', action='store_true', help='enable continuous synchronization')
     #parser.add_argument('-u, --username', nargs='?', required=False, help='username')
     #parser.add_argument('-p, --password', nargs='?', required=False, help='password')
-
     global g_src, g_dst, g_db, g_coll, g_query, g_start_optime, g_write_concern, g_logfilepath
     args = vars(parser.parse_args())
     print args
-    g_src = args['from']
-    g_dst = args['to']
-    g_db = args['db']
-    g_coll = args['coll']
+    if args['from'] != None:
+        g_src = args['from']
+    if args['to'] != None:
+        g_dst = args['to']
+    if args['db'] != None:
+        g_db = args['db']
+    if args['coll'] != None:
+        g_coll = args['coll']
     if args['query'] != None:
         g_query = eval(args['query'])
     if args['start_optime'] != None:

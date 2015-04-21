@@ -28,7 +28,7 @@ class MongoSynchronizer(object):
         self._dst_mc = None
         self._filter = None
         self._query = None
-        self._last_optime = None # optime of the last oplog has applied
+        self._current_optime = None # optime of the last oplog has been replayed
         self._w = 1 # write concern
         self._start_optime = None # if true, only sync oplog
         self._logger = logging.getLogger()
@@ -76,16 +76,14 @@ class MongoSynchronizer(object):
                 return
             oplog_start = doc['ts']
             self._logger.info('actual start timestamp is %s' % oplog_start)
-            self._last_optime = oplog_start
-            #self._sync_oplog(mc, oplog_start)
-            self._sync_oplog_mp(self._dst_host, self._dst_port, self._src_host, self._src_port, oplog_start)
-            #self._sync_oplog_mt(self._dst_host, self._dst_port, self._src_host, self._src_port, oplog_start)
+            self._current_optime = oplog_start
+            self._sync_oplog(mc, oplog_start)
         else:
             oplog_start = mongo_helper.get_optime(mc)
             if not oplog_start:
                 self._logger.error('[%s] get oplog_start failed, terminated' % self._current_process_name)
                 sys.exit(1)
-            self._last_optime = oplog_start
+            self._current_optime = oplog_start
             self._sync_databases(mc)
             self._sync_oplog(mc, oplog_start)
 
@@ -148,7 +146,12 @@ class MongoSynchronizer(object):
 
     def _sync_collection_mp2(self, mc, dbname, collname):
         dw = DocWriter(self._dst_host, self._dst_port, dbname, collname)
-        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
+        #cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
+        # pymongo 3.0 not sopport snapshot spec
+        if self._query:
+            cursor = mc[dbname][collname].find(self._query, no_cursor_timeout=True)
+        else:
+            cursor = mc[dbname][collname].find(no_cursor_timeout=True)
         n = 0
         for doc in cursor:
             dw.write(doc)
@@ -171,7 +174,12 @@ class MongoSynchronizer(object):
             p.start()
             processes.append(p)
         n = 0
-        cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
+        #cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
+        # pymongo 3.0 not sopport snapshot spec
+        if self._query:
+            cursor = mc[dbname][collname].find(self._query, no_cursor_timeout=True)
+        else:
+            cursor = mc[dbname][collname].find(no_cursor_timeout=True)
         for doc in cursor:
             while doc_q.qsize() > 10000:
                 time.sleep(0.2) # wait subprocess consume
@@ -211,121 +219,126 @@ class MongoSynchronizer(object):
                     self._logger.info('==== %s write %d' % (self._current_process_name, n))
                     sys.exit(0)
 
-    def _sync_oplog_mp(self, dst_host, dst_port, src_host, src_port, oplog_start):
-        """ Sync oplog with 2 processes.
-        """
-        self._logger.info('>>>> %s.%s' % ('local', 'oplog.rs'))
-        oplog_q = multiprocessing.Queue()
-        ev = multiprocessing.Event()
-        ev.clear()
+    #def _sync_oplog_mp(self, dst_host, dst_port, src_host, src_port, oplog_start):
+    #    """ Sync oplog with 2 processes.
+    #    """
+    #    self._logger.info('>>>> %s.%s' % ('local', 'oplog.rs'))
+    #    oplog_q = multiprocessing.Queue()
+    #    ev = multiprocessing.Event()
+    #    ev.clear()
+    #
+    #    # create writer process
+    #    processes = []
+    #    for i in range(0, 1):
+    #        p = multiprocessing.Process(target=self._write_oplog, args=(oplog_q, ev, dst_host, dst_port))
+    #        p.start()
+    #        processes.append(p)
+    #
+    #    n = 0
+    #    mc = mongo_helper.mongo_connect(src_host, src_port)
+    #    cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+    #    while True:
+    #        for oplog in cursor:
+    #            while oplog_q.qsize() > 20000:
+    #                time.sleep(0.2) # wait subprocess consume
+    #            oplog_q.put(oplog)
+    #            n += 1
+    #            if n % 10000 == 0:
+    #                self._logger.info('[%s] push %d oplog, qsize: %d' % (self._current_process_name, n, oplog_q.qsize()))
+    #        else:
+    #            time.sleep(0.1)
+    #    #ev.set()
+    #    #for p in processes:
+    #    #    p.join()
+    #    #self._logger.info('==== %s.%s %d, qsize %d' % (dbname, collname, n, doc_q.qsize()))
 
-        # create writer process
-        processes = []
-        for i in range(0, 1):
-            p = multiprocessing.Process(target=self._write_oplog, args=(oplog_q, ev, dst_host, dst_port))
-            p.start()
-            processes.append(p)
+    #def _sync_oplog_mt(self, dst_host, dst_port, src_host, src_port, oplog_start):
+    #    """ Sync oplog with 2 processes.
+    #    """
+    #    self._logger.info('>>>> %s.%s' % ('local', 'oplog.rs'))
+    #    oplog_q = Queue.Queue()
+    #    ev = threading.Event()
+    #    ev.clear()
 
-        n = 0
-        mc = mongo_helper.mongo_connect(src_host, src_port)
-        cursor = mc['local']['oplog.rs'].find(spec={'ts': {'$gte': oplog_start}}, tailable=True, timeout=False)
-        for oplog in cursor:
-            while oplog_q.qsize() > 50000:
-                time.sleep(0.2) # wait subprocess consume
-            oplog_q.put(oplog)
-            n += 1
-            if n % 10000 == 0:
-                self._logger.info('[%s] push %d oplog, qsize: %d' % (self._current_process_name, n, oplog_q.qsize()))
-        #ev.set()
-        #for p in processes:
-        #    p.join()
-        #self._logger.info('==== %s.%s %d, qsize %d' % (dbname, collname, n, doc_q.qsize()))
+    #    # create writer thread
+    #    threads = []
+    #    for i in range(0, 1):
+    #        p = threading.Thread(target=self._write_oplog, args=(oplog_q, ev, dst_host, dst_port))
+    #        p.start()
+    #        threads.append(p)
 
-    def _sync_oplog_mt(self, dst_host, dst_port, src_host, src_port, oplog_start):
-        """ Sync oplog with 2 processes.
-        """
-        self._logger.info('>>>> %s.%s' % ('local', 'oplog.rs'))
-        oplog_q = Queue.Queue()
-        ev = threading.Event()
-        ev.clear()
+    #    n = 0
+    #    mc = mongo_helper.mongo_connect(src_host, src_port)
+    #    cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+    #    while True:
+    #        for oplog in cursor:
+    #            while oplog_q.qsize() > 20000:
+    #                time.sleep(0.2) # wait subprocess consume
+    #            oplog = cursor.next()
+    #            oplog_q.put(oplog)
+    #            n += 1
+    #            if n % 10000 == 0:
+    #                self._logger.info('[%s] push %d oplog, qsize: %d' % (self._current_process_name, n, oplog_q.qsize()))
+    #        else:
+    #            time.sleep(0.1)
+    #    #ev.set()
+    #    #for p in processes:
+    #    #    p.join()
+    #    #self._logger.info('==== %s.%s %d, qsize %d' % (dbname, collname, n, doc_q.qsize()))
 
-        # create writer process
-        threads = []
-        for i in range(0, 1):
-            p = threading.Thread(target=self._write_oplog, args=(oplog_q, ev, dst_host, dst_port))
-            p.start()
-            threads.append(p)
+    #def _write_oplog(self, q, ev, dst_host, dst_port):
+    #    """ Write document to destination in subprocess.
+    #    """
+    #    mc = mongo_helper.mongo_connect(dst_host, dst_port, w=1)
+    #    n = 0
+    #    while True:
+    #        try:
+    #            oplog = q.get(block=True, timeout=0.1)
+    #            # use while make sure oplog is applied successfully
+    #            while True:
+    #                try:
+    #                    # parse oplog
+    #                    ts = oplog['ts']
+    #                    op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
+    #                    ns = oplog['ns']
+    #                    dbname = ns.split('.', 1)[0]
+    #                    if op == 'i': # insert
+    #                        collname = ns.split('.', 1)[1]
+    #                        mc[dbname][collname].save(oplog['o'])
+    #                    elif op == 'u': # update
+    #                        collname = ns.split('.', 1)[1]
+    #                        mc[dbname][collname].update(oplog['o2'], oplog['o'])
+    #                    elif op == 'd': # delete
+    #                        collname = ns.split('.', 1)[1]
+    #                        mc[dbname][collname].remove(oplog['o'])
+    #                    elif op == 'c': # command
+    #                        mc[dbname].command(oplog['o'])
+    #                    elif op == 'n': # no-op
+    #                        self._logger.info('no-op')
+    #                    else:
+    #                        self._logger.error('unknown command: %s' % oplog)
 
-        n = 0
-        mc = mongo_helper.mongo_connect(src_host, src_port)
-        cursor = mc['local']['oplog.rs'].find(spec={'ts': {'$gte': oplog_start}}, tailable=True, timeout=False)
-        for oplog in cursor:
-            while oplog_q.qsize() > 50000:
-                time.sleep(0.2) # wait subprocess consume
-            oplog_q.put(oplog)
-            n += 1
-            if n % 10000 == 0:
-                self._logger.info('[%s] push %d oplog, qsize: %d' % (self._current_process_name, n, oplog_q.qsize()))
-        #ev.set()
-        #for p in processes:
-        #    p.join()
-        #self._logger.info('==== %s.%s %d, qsize %d' % (dbname, collname, n, doc_q.qsize()))
-
-
-
-    def _write_oplog(self, q, ev, dst_host, dst_port):
-        """ Write document to destination in subprocess.
-        """
-        mc = mongo_helper.mongo_connect(dst_host, dst_port, w=0)
-        n = 0
-        while True:
-            try:
-                oplog = q.get(block=True, timeout=0.1)
-                # use while make sure oplog is applied successfully
-                while True:
-                    try:
-                        # parse oplog
-                        ts = oplog['ts']
-                        op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
-                        ns = oplog['ns']
-                        dbname = ns.split('.', 1)[0]
-                        if op == 'i': # insert
-                            collname = ns.split('.', 1)[1]
-                            mc[dbname][collname].save(oplog['o'])
-                        elif op == 'u': # update
-                            collname = ns.split('.', 1)[1]
-                            mc[dbname][collname].update(oplog['o2'], oplog['o'])
-                        elif op == 'd': # delete
-                            collname = ns.split('.', 1)[1]
-                            mc[dbname][collname].remove(oplog['o'])
-                        elif op == 'c': # command
-                            mc[dbname].command(oplog['o'])
-                        elif op == 'n': # no-op
-                            self._logger.info('no-op')
-                        else:
-                            self._logger.error('unknown command: %s' % oplog)
-
-                        self._last_optime = ts
-                        n += 1
-                        if n % 1000 == 0:
-                            self._logger.info('apply %d oplog, %s, %s' % (n, datetime.datetime.fromtimestamp(ts.time), ts))
-                        break
-                    except pymongo.errors.AutoReconnect:
-                        self._dst_mc = self.reconnect(self._dst_host, self._dst_port, w=self._w)
-                    except pymongo.errors.DuplicateKeyError as e:
-                        # TODO
-                        # through unique index, delete old, insert new
-                        self._logger.error(e)
-                        self._logger.error(oplog)
-                        break
-                    except Exception as e:
-                        self._logger.error(e)
-                        self._logger.error(oplog)
-                        break
-            except Queue.Empty:
-                if ev.is_set():
-                    self._logger.info('==== %s write %d' % (self._current_process_name, n))
-                    sys.exit(0)
+    #                    self._current_optime = ts
+    #                    n += 1
+    #                    if n % 1000 == 0:
+    #                        self._logger.info('apply %d oplog, %s, %s' % (n, datetime.datetime.fromtimestamp(ts.time), ts))
+    #                    break
+    #                except pymongo.errors.AutoReconnect:
+    #                    self._dst_mc = self.reconnect(self._dst_host, self._dst_port, w=self._w)
+    #                except pymongo.errors.DuplicateKeyError as e:
+    #                    # TODO
+    #                    # through unique index, delete old, insert new
+    #                    self._logger.error(e)
+    #                    self._logger.error(oplog)
+    #                    break
+    #                except Exception as e:
+    #                    self._logger.error(e)
+    #                    self._logger.error(oplog)
+    #                    break
+    #        except Queue.Empty:
+    #            if ev.is_set():
+    #                self._logger.info('==== %s write %d' % (self._current_process_name, n))
+    #                sys.exit(0)
 
     def _sync_indexes(self, mc, dbname):
         """ Create indexes.
@@ -348,6 +361,11 @@ class MongoSynchronizer(object):
                 if not self._filter.valid_index('%s.%s' % (dbname, collname)):
                     continue
 
+            # skip _id index
+            if '_id' in doc['key'] and len(doc['key'].keys()) == 1:
+                print 'skip', doc['key']
+                continue
+
             if 'expireAfterSeconds' in doc:
                 self._dst_mc[dbname][collname].create_index(index_parse(doc['key']),
                         unique=doc.get('unique', False),
@@ -366,7 +384,7 @@ class MongoSynchronizer(object):
         try:
             host, port = mc.primary
             self._logger.info('sync oplog from %s on %s:%d...' % (oplog_start, host, port))
-            cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, tailable=True, timeout=False)
+            cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
             if cursor[0]['ts'] != oplog_start:
                 self._logger.error('%s is stale, terminate.' % oplog_start)
                 return
@@ -392,34 +410,13 @@ class MongoSynchronizer(object):
                 if self._filter:
                     if not self._filter.valid_oplog(oplog):
                         continue
-
-                # use while make sure oplog is applied successfully
+                # make oplog replay successfully
                 while True:
                     try:
-                        # parse oplog
-                        ts = oplog['ts']
-                        op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
-                        ns = oplog['ns']
-                        dbname = ns.split('.', 1)[0]
-                        if op == 'i': # insert
-                            collname = ns.split('.', 1)[1]
-                            self._dst_mc[dbname][collname].save(oplog['o'])
-                        elif op == 'u': # update
-                            collname = ns.split('.', 1)[1]
-                            self._dst_mc[dbname][collname].update(oplog['o2'], oplog['o'])
-                        elif op == 'd': # delete
-                            collname = ns.split('.', 1)[1]
-                            self._dst_mc[dbname][collname].remove(oplog['o'])
-                        elif op == 'c': # command
-                            self._dst_mc[dbname].command(oplog['o'])
-                        elif op == 'n': # no-op
-                            self._logger.info('no-op')
-                        else:
-                            self._logger.error('unknown command: %s' % oplog)
-
-                        self._last_optime = ts
+                        self._replay_oplog(oplog)
                         n += 1
                         if n % 1000 == 0:
+                            ts = oplog['ts']
                             self._logger.info('apply %d, %s, %s' % (n, datetime.datetime.fromtimestamp(ts.time), ts))
                         break
                     except pymongo.errors.AutoReconnect:
@@ -440,12 +437,38 @@ class MongoSynchronizer(object):
             except pymongo.errors.AutoReconnect:
                 mc.close()
                 mc = self.reconnect(host, port, w=self._w)
-                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, tailable=True)
+                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._current_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE)
             except Exception as e:
                 self._logger.error(e)
                 mc.close()
                 mc = self.reconnect(host, port, w=self._w)
-                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, tailable=True)
+                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._current_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE)
+
+    def _replay_oplog(self, oplog):
+        """ Replay oplog on destination.
+        """
+        # parse
+        ts = oplog['ts']
+        op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
+        ns = oplog['ns']
+        dbname = ns.split('.', 1)[0]
+        if op == 'i': # insert
+            collname = ns.split('.', 1)[1]
+            #self._dst_mc[dbname][collname].insert_one(oplog['o'])
+            self._dst_mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
+        elif op == 'u': # update
+            collname = ns.split('.', 1)[1]
+            self._dst_mc[dbname][collname].update_one(oplog['o2'], oplog['o'])
+        elif op == 'd': # delete
+            collname = ns.split('.', 1)[1]
+            self._dst_mc[dbname][collname].delete_one(oplog['o'])
+        elif op == 'c': # command
+            self._dst_mc[dbname].command(oplog['o'])
+        elif op == 'n': # no-op
+            self._logger.info('no-op')
+        else:
+            self._logger.error('unknown command: %s' % oplog)
+        self._current_optime = ts
 
     @property
     def _current_process_name(self):
@@ -455,15 +478,11 @@ class MongoSynchronizer(object):
         """ Start data synchronization.
         """
         # never drop database automatically
-        # you should clear the databases by self if necessary
-
+        # you should clear the databases manaully if necessary
         try:
             self._sync(self._src_mc)
         except exceptions.KeyboardInterrupt:
             self._logger.info('terminating...')
-        except Exception as e:
-            self._logger.error(e)
-            raise e
 
     def reconnect(self, host, port, **kwargs):
         """ Try to reconnect until done.
@@ -481,4 +500,3 @@ class MongoSynchronizer(object):
             except Exception as e:
                 self._logger.error(e)
                 time.sleep(1)
-
