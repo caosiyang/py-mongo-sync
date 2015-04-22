@@ -491,6 +491,7 @@ class MongoSynchronizer(object):
                 self._logger.info('try to reconnect %s:%d' % (host, port))
                 mc = mongo_helper.mongo_connect(host, port, **kwargs)
                 mc.database_names() # test connection
+                self._logger.info('reconnect ok')
                 return mc
             except Exception as e:
                 mc.close()
