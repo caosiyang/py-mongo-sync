@@ -201,7 +201,7 @@ class MongoSynchronizer(object):
                 doc = q.get(block=True, timeout=0.1)
                 while True:
                     try:
-                        self._dst_mc[dbname][collname].save(doc)
+                        self._dst_mc[dbname][collname].replace_one({'_id': doc['_id']}, doc, upsert=True)
                         break
                     except pymongo.errors.DuplicateKeyError as e:
                         # TODO
@@ -361,9 +361,8 @@ class MongoSynchronizer(object):
                 if not self._filter.valid_index('%s.%s' % (dbname, collname)):
                     continue
 
-            # skip _id index
+            # ignore _id index
             if '_id' in doc['key'] and len(doc['key'].keys()) == 1:
-                print 'skip', doc['key']
                 continue
 
             if 'expireAfterSeconds' in doc:
@@ -454,8 +453,8 @@ class MongoSynchronizer(object):
         dbname = ns.split('.', 1)[0]
         if op == 'i': # insert
             collname = ns.split('.', 1)[1]
-            #self._dst_mc[dbname][collname].insert_one(oplog['o'])
-            self._dst_mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
+            self._dst_mc[dbname][collname].insert_one(oplog['o'])
+            #self._dst_mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
         elif op == 'u': # update
             collname = ns.split('.', 1)[1]
             self._dst_mc[dbname][collname].update_one(oplog['o2'], oplog['o'])
