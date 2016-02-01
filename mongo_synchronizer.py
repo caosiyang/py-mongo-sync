@@ -33,6 +33,9 @@ class MongoSynchronizer(object):
         self._current_optime = None # optime of the last oplog has been replayed
         self._logger = logging.getLogger()
 
+        self._ignore_dbs = ['admin', 'local']
+        self._ignore_colls = ['system.indexes', 'system.profile', 'system.users']
+
         self._src_username = kwargs.get('src_username')
         self._src_password = kwargs.get('src_password')
         self._dst_username = kwargs.get('dst_username')
@@ -127,20 +130,11 @@ class MongoSynchronizer(object):
         """
         collnames = mc[dbname].collection_names(include_system_collections=False)
         for collname in collnames:
-            # you should maintain users manually
-            if collname == 'system.users':
-                continue
-            # system.indexes never use since MongoDB v3.0
-            if collname == 'system.indexes':
-                continue
-            if collname == 'system.profile':
-                continue
-
             if self._filter and not self._filter.valid_collection('%s.%s' % (dbname, collname)):
                 continue
-
+            if collname in self._ignore_colls:
+                continue
             self._sync_collection(mc, dbname, collname)
-            #self._sync_collection_mp(mc, dbname, collname)
 
     def _sync_collection(self, mc, dbname, collname):
         """ Sync a collection through batch write.
@@ -168,14 +162,17 @@ class MongoSynchronizer(object):
         self._logger.info('[%s] ==== %s.%s %d' % (self._current_process_name, dbname, collname, n))
 
     def _sync_collection_mp2(self, mc, dbname, collname):
+        """ Sync a collection with multi-processes.
+        Deprecated.
+        Without fully test.
+        """
         dw = DocWriter(self._dst_host, self._dst_port, dbname, collname)
-        #cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
-        # pymongo 3.0 not sopport snapshot spec
-        if self._query:
-            cursor = mc[dbname][collname].find(self._query, no_cursor_timeout=True)
-        else:
-            cursor = mc[dbname][collname].find(no_cursor_timeout=True)
         n = 0
+        cursor = mc[dbname][collname].find(
+                filter=self._query,
+                cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                no_cursor_timeout=True,
+                modifiers={'$snapshot': True})
         for doc in cursor:
             dw.write(doc)
             n += 1
@@ -186,6 +183,8 @@ class MongoSynchronizer(object):
 
     def _sync_collection_mp(self, mc, dbname, collname):
         """ Sync a collection with multi-processes.
+        Deprecated.
+        Without fully test.
         """
         self._logger.info('>>>> %s.%s' % (dbname, collname))
         doc_q = multiprocessing.Queue()
@@ -197,12 +196,11 @@ class MongoSynchronizer(object):
             p.start()
             processes.append(p)
         n = 0
-        #cursor = mc[dbname][collname].find(spec=self._query, snapshot=True, timeout=False)
-        # pymongo 3.0 not sopport snapshot spec
-        if self._query:
-            cursor = mc[dbname][collname].find(self._query, no_cursor_timeout=True)
-        else:
-            cursor = mc[dbname][collname].find(no_cursor_timeout=True)
+        cursor = mc[dbname][collname].find(
+                filter=self._query,
+                cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                no_cursor_timeout=True,
+                modifiers={'$snapshot': True})
         for doc in cursor:
             while doc_q.qsize() > 10000:
                 time.sleep(0.2) # wait subprocess consume
@@ -280,40 +278,6 @@ class MongoSynchronizer(object):
     #    #    p.join()
     #    #self._logger.info('==== %s.%s %d, qsize %d' % (dbname, collname, n, doc_q.qsize()))
 
-    #def _sync_oplog_mt(self, dst_host, dst_port, src_host, src_port, oplog_start):
-    #    """ Sync oplog with 2 processes.
-    #    """
-    #    self._logger.info('>>>> %s.%s' % ('local', 'oplog.rs'))
-    #    oplog_q = Queue.Queue()
-    #    ev = threading.Event()
-    #    ev.clear()
-
-    #    # create writer thread
-    #    threads = []
-    #    for i in range(0, 1):
-    #        p = threading.Thread(target=self._write_oplog, args=(oplog_q, ev, dst_host, dst_port))
-    #        p.start()
-    #        threads.append(p)
-
-    #    n = 0
-    #    mc = mongo_helper.mongo_connect(src_host, src_port)
-    #    cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
-    #    while True:
-    #        for oplog in cursor:
-    #            while oplog_q.qsize() > 20000:
-    #                time.sleep(0.2) # wait subprocess consume
-    #            oplog = cursor.next()
-    #            oplog_q.put(oplog)
-    #            n += 1
-    #            if n % 10000 == 0:
-    #                self._logger.info('[%s] push %d oplog, qsize: %d' % (self._current_process_name, n, oplog_q.qsize()))
-    #        else:
-    #            time.sleep(0.1)
-    #    #ev.set()
-    #    #for p in processes:
-    #    #    p.join()
-    #    #self._logger.info('==== %s.%s %d, qsize %d' % (dbname, collname, n, doc_q.qsize()))
-
     #def _write_oplog(self, q, ev, dst_host, dst_port):
     #    """ Write document to destination in subprocess.
     #    """
@@ -371,44 +335,40 @@ class MongoSynchronizer(object):
     def _sync_indexes(self, mc, dbname):
         """ Create indexes.
         """
-        def index_parse(index_map):
-            index_list = []
-            for fieldname, direction in index_map.items():
+        def format(key_direction_list):
+            """ Format key and direction of index.
+            """
+            res = []
+            for key, direction in key_direction_list:
                 if isinstance(direction, float) or isinstance(direction, long):
                     direction = int(direction)
-                index_list.append((fieldname, direction))
-            return index_list
+                res.append((key, direction))
+            return res
 
         if self._ignore_indexes:
             return
 
-        for doc in mc[dbname]['system.indexes'].find():
-            collname = doc['ns'].replace(dbname, '', 1)[1:]
-
-            # you should maintain users manually
-            if collname == 'system.users':
-                continue
-
+        for collname in mc[dbname].collection_names():
             if self._filter and not self._filter.valid_index('%s.%s' % (dbname, collname)):
                 continue
-
-            # ignore _id index
-            if '_id' in doc['key'] and len(doc['key'].keys()) == 1:
+            if collname in self._ignore_colls:
                 continue
-
-            if 'expireAfterSeconds' in doc:
-                self._dst_mc[dbname][collname].create_index(
-                        index_parse(doc['key']),
-                        unique=doc.get('unique', False),
-                        dropDups=doc.get('dropDups', False),
-                        background=doc.get('background', False),
-                        expireAfterSeconds=doc.get('expireAfterSeconds'))
-            else:
-                self._dst_mc[dbname][collname].create_index(
-                        index_parse(doc['key']),
-                        unique=doc.get('unique', False),
-                        dropDups=doc.get('dropDups', False),
-                        background=doc.get('background', False))
+            index_info = mc[dbname][collname].index_information()
+            for val in index_info.itervalues():
+                print val['key']
+                if 'expireAfterSeconds' in val:
+                    self._dst_mc[dbname][collname].create_index(
+                            format(val['key']),
+                            unique=val.get('unique', False),
+                            dropDups=val.get('dropDups', False),
+                            background=val.get('background', False),
+                            expireAfterSeconds=val.get('expireAfterSeconds'))
+                else:
+                    self._dst_mc[dbname][collname].create_index(
+                            format(val['key']),
+                            unique=val.get('unique', False),
+                            dropDups=val.get('dropDups', False),
+                            background=val.get('background', False))
 
     def _sync_oplog(self, mc, oplog_start):
         """ Apply oplog.
