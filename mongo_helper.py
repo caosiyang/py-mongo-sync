@@ -96,6 +96,20 @@ def get_optime(mc):
                 break
     return ts
 
+def get_optime_tokumx(mc):
+    """ Get optime of primary in the replica set.
+    """
+    ts = None
+    rs_status = mc['admin'].command({'replSetGetStatus': 1})
+    members = rs_status.get('members')
+    if members:
+        for member in members:
+            role = member.get('stateStr')
+            if role == 'PRIMARY':
+                ts = member.get('optimeDate')
+                break
+    return ts
+
 def replay_oplog(oplog, mc):
     """ Replay oplog.
     """

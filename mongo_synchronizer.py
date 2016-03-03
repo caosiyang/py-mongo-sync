@@ -30,12 +30,13 @@ class MongoSynchronizer(object):
         self._query = None
         self._w = 1 # write concern, default 1
         self._start_optime = None # if true, only sync oplog
-        self._current_optime = None # optime of the last oplog has been replayed
+        self._last_optime = None # optime of the last oplog has been replayed
         self._logger = logging.getLogger()
 
         self._ignore_dbs = ['admin', 'local']
         self._ignore_colls = ['system.indexes', 'system.profile', 'system.users']
 
+        self._src_engine = kwargs.get('src_engine')
         self._src_username = kwargs.get('src_username')
         self._src_password = kwargs.get('src_password')
         self._dst_username = kwargs.get('dst_username')
@@ -89,14 +90,18 @@ class MongoSynchronizer(object):
                 return
             oplog_start = doc['ts']
             self._logger.info('actual start timestamp is %s' % oplog_start)
-            self._current_optime = oplog_start
+            self._last_optime = oplog_start
             self._sync_oplog(mc, oplog_start)
         else:
-            oplog_start = mongo_helper.get_optime(mc)
+            oplog_start = None
+            if self._src_engine == 'mongodb':
+                oplog_start = mongo_helper.get_optime(mc)
+            elif self._src_engine == 'tokumx':
+                oplog_start = mongo_helper.get_optime_tokumx(mc)
             if not oplog_start:
-                self._logger.error('[%s] get oplog_start failed, terminated' % self._current_process_name)
+                self._logger.error('[%s] get oplog_start failed, terminate' % self._current_process_name)
                 sys.exit(1)
-            self._current_optime = oplog_start
+            self._last_optime = oplog_start
             self._sync_databases(mc)
             self._sync_oplog(mc, oplog_start)
 
@@ -157,6 +162,7 @@ class MongoSynchronizer(object):
             if n % 10000 == 0:
                 self._logger.info('[%s] >> %d' % (self._current_process_name, n))
         if len(docs) > 0:
+            print docs
             self._dst_mc[dbname][collname].insert_many(docs)
             n += len(docs)
         self._logger.info('[%s] ==== %s.%s %d' % (self._current_process_name, dbname, collname, n))
@@ -310,7 +316,7 @@ class MongoSynchronizer(object):
     #                    else:
     #                        self._logger.error('unknown command: %s' % oplog)
 
-    #                    self._current_optime = ts
+    #                    self._last_optime = ts
     #                    n += 1
     #                    if n % 1000 == 0:
     #                        self._logger.info('apply %d oplog, %s, %s' % (n, datetime.datetime.fromtimestamp(ts.time), ts))
@@ -446,15 +452,21 @@ class MongoSynchronizer(object):
                         username=self._src_username,
                         password=self._src_password,
                         w=self._w)
-                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._current_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE)
+                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
             except Exception as e:
                 self._logger.error(e)
                 mc.close()
                 mc = self.reconnect(host, port, w=self._w)
-                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._current_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE)
+                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
 
     def _replay_oplog(self, oplog):
-        """ Replay oplog on destination.
+        if self._src_engine == 'mongodb':
+            self._replay_oplog_mongodb(oplog)
+        elif self._src_engine == 'tokumx':
+            self._replay_oplog_tokumx(oplog)
+
+    def _replay_oplog_mongodb(self, oplog):
+        """ Replay oplog on destination if source is MongoDB.
         """
         # parse
         ts = oplog['ts']
@@ -474,10 +486,39 @@ class MongoSynchronizer(object):
         elif op == 'c': # command
             self._dst_mc[dbname].command(oplog['o'])
         elif op == 'n': # no-op
-            self._logger.info('no-op')
+            pass
         else:
-            self._logger.error('unknown command: %s' % oplog)
-        self._current_optime = ts
+            self._logger.error('unknown operation: %s' % oplog)
+        self._last_optime = ts
+
+    def _replay_oplog_tokumx(self, oplog):
+        """ Replay oplog on destination if source is TokuMX.
+        """
+        for op in oplog['ops']:
+            if op['op'] == 'i':
+                dbname = op['ns'].split('.', 1)[0]
+                collname = op['ns'].split('.', 1)[1]
+                self._dst_mc[dbname][collname].insert_one(op['o'])
+            elif op['op'] == 'u':
+                dbname = op['ns'].split('.', 1)[0]
+                collname = op['ns'].split('.', 1)[1]
+                self._dst_mc[dbname][collname].update({'_id': op['o']['_id']}, op['o2'])
+            elif op['op'] == 'ur':
+                dbname = op['ns'].split('.', 1)[0]
+                collname = op['ns'].split('.', 1)[1]
+                self._dst_mc[dbname][collname].update({'_id': op['pk']['']}, op['m'])
+            elif op['op'] == 'd':
+                dbname = op['ns'].split('.', 1)[0]
+                collname = op['ns'].split('.', 1)[1]
+                self._dst_mc[dbname][collname].remove({'_id': op['o']['_id']})
+            elif op['op'] == 'c':
+                dbname = op['ns'].split('.', 1)[0]
+                self._dst_mc[dbname].command(op['o'])
+            elif op['op'] == 'n':
+                pass
+            else:
+                self._logger.error('unknown operation: %s' % op)
+        self._last_optime = oplog['ts']
 
     @property
     def _current_process_name(self):

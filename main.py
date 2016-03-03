@@ -13,6 +13,7 @@ import mongo_synchronizer
 
 # global variables
 g_src = ''
+g_src_engine = 'mongodb'
 g_src_username = ''
 g_src_password = ''
 g_dst = ''
@@ -28,12 +29,13 @@ g_logfilepath = ''
 def parse_args():
     """ Parse arguments.
     """
-    global g_src, g_src_username, g_src_password, g_dst, g_dst_username, g_dst_password, g_db, g_coll, g_query, g_start_optime, g_write_concern, g_logfilepath
+    global g_src, g_src_engine, g_src_username, g_src_password, g_dst, g_dst_username, g_dst_password, g_db, g_coll, g_query, g_start_optime, g_write_concern, g_logfilepath
 
     parser = argparse.ArgumentParser(description='Sync data from a replica-set to another mongod/replica-set/sharded-cluster.')
     parser.add_argument('--from', nargs='?', required=True, help='the source must be a mongod instance of replica-set')
     parser.add_argument('--src-username', nargs='?', required=False, help='src username')
     parser.add_argument('--src-password', nargs='?', required=False, help='src password')
+    parser.add_argument('--src-engine', nargs='?', required=False, help='src engine(mongodb or tokumx), mongodb default')
     parser.add_argument('--to', nargs='?', required=True, help='the destionation should be a mongos or mongod instance')
     parser.add_argument('--dst-username', nargs='?', required=False, help='dst username')
     parser.add_argument('--dst-password', nargs='?', required=False, help='dst password')
@@ -48,6 +50,11 @@ def parse_args():
     args = vars(parser.parse_args())
     if args['from'] != None:
         g_src = args['from']
+    if args['src_engine'] != None:
+        if args['src_engine'] not in ['mongodb', 'tokumx']:
+            print 'invalid src_engine, terminate'
+            sys.exit(1)
+        g_src_engine = args['src_engine']
     if args['src_username'] != None:
         g_src_username = args['src_username']
     if args['src_password'] != None:
@@ -89,7 +96,7 @@ def logger_init(filepath):
         logger.addHandler(handler_stdout)
 
 def main():
-    global g_src, g_src_username, g_src_password, g_dst, g_dst_username, g_dst_password, g_db, g_coll, g_query, g_start_optime, g_write_concern, g_logfilepath
+    global g_src, g_src_engine, g_src_username, g_src_password, g_dst, g_dst_username, g_dst_password, g_db, g_coll, g_query, g_start_optime, g_write_concern, g_logfilepath
 
     parse_args()
 
@@ -97,6 +104,7 @@ def main():
     logger = logging.getLogger()
     logger.info('================================================')
     logger.info('src             :  %s' % g_src)
+    logger.info('src engine      :  %s' % g_src_engine)
     logger.info('src username    :  %s' % g_src_username)
     logger.info('src password    :  %s' % g_src_password)
     logger.info('dst             :  %s' % g_dst)
@@ -120,6 +128,7 @@ def main():
             g_dst,
             src_username=g_src_username,
             src_password=g_src_password,
+            src_engine=g_src_engine,
             dst_username=g_dst_username,
             dst_password=g_dst_password,
             collections=colls,
