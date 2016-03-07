@@ -22,7 +22,7 @@ g_dst_password = ''
 g_db = ''
 g_coll = ''
 g_query = None
-g_start_optime = None
+g_start_optime = ''
 g_write_concern = 1
 g_logfilepath = ''
 
@@ -72,7 +72,7 @@ def parse_args():
     if args['query'] != None:
         g_query = eval(args['query'])
     if args['start_optime'] != None:
-        g_start_optime = int(args['start_optime'])
+        g_start_optime = args['start_optime']
     if args['write_concern'] != None:
         g_write_concern = int(args['write_concern'])
     if args['log'] != None:

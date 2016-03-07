@@ -44,7 +44,13 @@ def get_standard_index_name(index_items):
     """
     index_keys = []
     for key, direction in index_items['key']:
-        index_keys.append('%s_%d' % (key, int(direction)))
+        if isinstance(direction, int) or isinstance(direction, float):
+            index_keys.append('%s_%d' % (key, int(direction)))
+        elif isinstance(direction, str) or isinstance(direction, unicode):
+            index_keys.append('%s_%s' % (key, direction))
+        else:
+            print 'invalid direction for', index_items['key']
+            sys.exit(1)
     return '_'.join(index_keys)
 
 def main():

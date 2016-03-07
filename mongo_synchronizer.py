@@ -79,46 +79,59 @@ class MongoSynchronizer(object):
         if self._dst_mc:
             self._dst_mc.close()
 
-    def _sync(self, mc):
+    def _sync(self):
         """ Sync databases and oplog.
         """
-        if isinstance(self._start_optime, int):
-            oplog_start = bson.timestamp.Timestamp(self._start_optime, 0)
-            doc = mc['local']['oplog.rs'].find_one({'ts': {'$gte': oplog_start}})
-            if not doc:
-                self._logger.error('specified oplog not found')
-                return
-            oplog_start = doc['ts']
+        if self._start_optime:
+            if self._src_engine == 'mongodb':
+                oplog_start = bson.timestamp.Timestamp(int(self._start_optime), 0)
+                doc = self._src_mc['local']['oplog.rs'].find_one({'ts': {'$gte': oplog_start}})
+                if not doc:
+                    self._logger.error('specified oplog not found')
+                    return
+                oplog_start = doc['ts']
+            elif self._src_engine == 'tokumx':
+                timestamp_str = self._start_optime
+                if len(timestamp_str) != 14:
+                    self._logger.error("invalid --start-optime, start optime for TokuMX should be 14 characters, like 'YYYYmmddHHMMSS'")
+                    return
+                oplog_start = datetime.datetime(int(timestamp_str[0:4]), int(timestamp_str[4:6]), int(timestamp_str[6:8]),
+                        int(timestamp_str[8:10]), int(timestamp_str[10:12]),int(timestamp_str[12:14]))
+                doc = self._src_mc['local']['oplog.rs'].find_one({'ts': {'$gte': oplog_start}})
+                if not doc:
+                    self._logger.error('specified oplog not found')
+                    return
+                oplog_start = doc['ts']
             self._logger.info('actual start timestamp is %s' % oplog_start)
             self._last_optime = oplog_start
-            self._sync_oplog(mc, oplog_start)
+            self._sync_oplog(oplog_start)
         else:
             oplog_start = None
             if self._src_engine == 'mongodb':
-                oplog_start = mongo_helper.get_optime(mc)
+                oplog_start = mongo_helper.get_optime(self._src_mc)
             elif self._src_engine == 'tokumx':
-                oplog_start = mongo_helper.get_optime_tokumx(mc)
+                oplog_start = mongo_helper.get_optime_tokumx(self._src_mc)
             if not oplog_start:
                 self._logger.error('[%s] get oplog_start failed, terminate' % self._current_process_name)
                 sys.exit(1)
             self._last_optime = oplog_start
-            self._sync_databases(mc)
-            self._sync_oplog(mc, oplog_start)
+            self._sync_databases()
+            self._sync_oplog(oplog_start)
 
-    def _sync_databases(self, mc):
+    def _sync_databases(self):
         """ Sync databases except 'admin' and 'local'.
         """
-        host, port = mc.primary
+        host, port = self._src_mc.primary
         self._logger.info('[%s] sync databases from %s:%d...' % (self._current_process_name, host, port))
         exclude_dbnames = ['admin', 'local']
-        for dbname in mc.database_names():
+        for dbname in self._src_mc.database_names():
             if dbname not in exclude_dbnames:
                 if self._filter and not self._filter.valid_database(dbname):
                     continue
-                self._sync_database(mc, dbname)
+                self._sync_database(dbname)
         self._logger.info('[%s] all databases done' % self._current_process_name)
 
-    def _sync_database(self, mc, dbname):
+    def _sync_database(self, dbname):
         """ Sync a database.
         """
         # Q: Why create indexes first?
@@ -127,28 +140,28 @@ class MongoSynchronizer(object):
         #    Because when you export and import data, duplicate key document may be produced.
         #    Another reason is for TokuMX. It does not support 'dropDups' option for an uniuqe index.
         #    The 'duplicate keys' error must cause index creation failed.
-        self._sync_indexes(mc, dbname)
-        self._sync_collections(mc, dbname)
+        self._sync_indexes(dbname)
+        self._sync_collections(dbname)
 
-    def _sync_collections(self, mc, dbname):
+    def _sync_collections(self, dbname):
         """ Sync all collections in the database except system collections.
         """
-        collnames = mc[dbname].collection_names(include_system_collections=False)
+        collnames = self._src_mc[dbname].collection_names(include_system_collections=False)
         for collname in collnames:
             if self._filter and not self._filter.valid_collection('%s.%s' % (dbname, collname)):
                 continue
             if collname in self._ignore_colls:
                 continue
-            self._sync_collection(mc, dbname, collname)
+            self._sync_collection(dbname, collname)
 
-    def _sync_collection(self, mc, dbname, collname):
+    def _sync_collection(self, dbname, collname):
         """ Sync a collection through batch write.
         """
         self._logger.info('[%s] >>>> %s.%s' % (self._current_process_name, dbname, collname))
         n = 0
         docs = [] 
         batchsize = 1000
-        cursor = mc[dbname][collname].find(
+        cursor = self._src_mc[dbname][collname].find(
                 filter=self._query,
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 no_cursor_timeout=True,
@@ -162,19 +175,18 @@ class MongoSynchronizer(object):
             if n % 10000 == 0:
                 self._logger.info('[%s] >> %d' % (self._current_process_name, n))
         if len(docs) > 0:
-            print docs
             self._dst_mc[dbname][collname].insert_many(docs)
             n += len(docs)
         self._logger.info('[%s] ==== %s.%s %d' % (self._current_process_name, dbname, collname, n))
 
-    def _sync_collection_mp2(self, mc, dbname, collname):
+    def _sync_collection_mp2(self, dbname, collname):
         """ Sync a collection with multi-processes.
         Deprecated.
         Without fully test.
         """
         dw = DocWriter(self._dst_host, self._dst_port, dbname, collname)
         n = 0
-        cursor = mc[dbname][collname].find(
+        cursor = self._src_mc[dbname][collname].find(
                 filter=self._query,
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 no_cursor_timeout=True,
@@ -187,7 +199,7 @@ class MongoSynchronizer(object):
         dw.close()
         self._logger.info('[%s] >> %d all done' % (self._current_process_name, n))
 
-    def _sync_collection_mp(self, mc, dbname, collname):
+    def _sync_collection_mp(self, dbname, collname):
         """ Sync a collection with multi-processes.
         Deprecated.
         Without fully test.
@@ -202,7 +214,7 @@ class MongoSynchronizer(object):
             p.start()
             processes.append(p)
         n = 0
-        cursor = mc[dbname][collname].find(
+        cursor = self._src_mc[dbname][collname].find(
                 filter=self._query,
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 no_cursor_timeout=True,
@@ -338,7 +350,7 @@ class MongoSynchronizer(object):
     #                self._logger.info('==== %s write %d' % (self._current_process_name, n))
     #                sys.exit(0)
 
-    def _sync_indexes(self, mc, dbname):
+    def _sync_indexes(self, dbname):
         """ Create indexes.
         """
         def format(key_direction_list):
@@ -354,14 +366,13 @@ class MongoSynchronizer(object):
         if self._ignore_indexes:
             return
 
-        for collname in mc[dbname].collection_names():
+        for collname in self._src_mc[dbname].collection_names():
             if self._filter and not self._filter.valid_index('%s.%s' % (dbname, collname)):
                 continue
             if collname in self._ignore_colls:
                 continue
-            index_info = mc[dbname][collname].index_information()
+            index_info = self._src_mc[dbname][collname].index_information()
             for val in index_info.itervalues():
-                print val['key']
                 if 'expireAfterSeconds' in val:
                     self._dst_mc[dbname][collname].create_index(
                             format(val['key']),
@@ -376,40 +387,35 @@ class MongoSynchronizer(object):
                             dropDups=val.get('dropDups', False),
                             background=val.get('background', False))
 
-    def _sync_oplog(self, mc, oplog_start):
-        """ Apply oplog.
+    def _sync_oplog(self, oplog_start):
+        """ Replay oplog.
         """
         try:
-            host, port = mc.primary
-            self._logger.info('sync oplog from %s on %s:%d...' % (oplog_start, host, port))
-            cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+            host, port = self._src_mc.primary
+            self._logger.info('try to sync oplog from %s on %s:%d...' % (oplog_start, host, port))
+            cursor = self._src_mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
             if cursor[0]['ts'] != oplog_start:
-                self._logger.error('%s is stale, terminate.' % oplog_start)
+                self._logger.error('%s is stale, terminate' % oplog_start)
                 return
-            # no matter actually
-            # skip the first oplog-entry
-            #cursor.skip(1)
+            self._logger.info('%s is valid, continue' % oplog_start)
         except IndexError as e:
             self._logger.error(e)
-            self._logger.error('%s oplog not found, terminate.' % oplog_start)
+            self._logger.error('%s not found, terminate' % oplog_start)
             return
         except Exception as e:
             self._logger.error(e)
             raise e
 
-        n_oplog = 0
-        n = 0
+        self._logger.info('start replaying oplog...')
+        n_replayed = 0
         while True:
             try:
                 if not cursor.alive:
                     self._logger.error('cursor is dead')
                     raise pymongo.errors.AutoReconnect
 
-                # read a oplog
+                # get an oplog
                 oplog = cursor.next()
-                n_oplog += 1
-                if n_oplog % 1000 == 0:
-                    self._logger.info('read %d, %s, %s' % (n_oplog, datetime.datetime.fromtimestamp(oplog['ts'].time), oplog['ts']))
 
                 # validate oplog
                 if self._filter and not self._filter.valid_oplog(oplog):
@@ -419,51 +425,57 @@ class MongoSynchronizer(object):
                 while True:
                     try:
                         self._replay_oplog(oplog)
-                        n += 1
-                        if n % 1000 == 0:
-                            ts = oplog['ts']
-                            self._logger.info('apply %d, %s, %s' % (n, datetime.datetime.fromtimestamp(ts.time), ts))
+                        n_replayed += 1
+                        if n_replayed % 1000 == 0:
+                            self._print_progress(oplog)
                         break
-                    except pymongo.errors.AutoReconnect:
+                    except pymongo.errors.DuplicateKeyError as e:
+                        # TODO
+                        # through unique index, delete old, insert new
+                        #self._logger.error(oplog)
+                        #self._logger.error(e)
+                        break
+                    except pymongo.errors.AutoReconnect as e:
+                        self._logger.error(e)
                         self._dst_mc = self.reconnect(
                                 self._dst_host,
                                 self._dst_port,
                                 username=self._dst_username,
                                 password=self._dst_password,
                                 w=self._w)
-                    except pymongo.errors.DuplicateKeyError as e:
-                        # TODO
-                        # through unique index, delete old, insert new
+                    except pymongo.errors.WriteError as e:
                         self._logger.error(e)
-                        self._logger.error(oplog)
-                        break
-                    except Exception as e:
-                        self._logger.error(e)
-                        self._logger.error(oplog)
-                        break
+                        self._dst_mc = self.reconnect(
+                                self._dst_host,
+                                self._dst_port,
+                                username=self._dst_username,
+                                password=self._dst_password,
+                                w=self._w)
             except StopIteration as e:
-                # there is no operation to apply, wait a moment
+                # there is no oplog to replay now, wait a moment
                 time.sleep(0.1)
             except pymongo.errors.AutoReconnect:
-                mc.close()
-                mc = self.reconnect(
+                self._src_mc.close()
+                self._src_mc = self.reconnect(
                         host,
                         port,
                         username=self._src_username,
                         password=self._src_password,
                         w=self._w)
-                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
-            except Exception as e:
-                self._logger.error(e)
-                mc.close()
-                mc = self.reconnect(host, port, w=self._w)
-                cursor = mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+                cursor = self._src_mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
 
     def _replay_oplog(self, oplog):
         if self._src_engine == 'mongodb':
             self._replay_oplog_mongodb(oplog)
         elif self._src_engine == 'tokumx':
             self._replay_oplog_tokumx(oplog)
+
+    def _print_progress(self, oplog):
+        ts = oplog['ts']
+        if self._src_engine == 'mongodb':
+            self._logger.info('sync to %s, %s' % (datetime.datetime.fromtimestamp(ts.time), ts))
+        elif self._src_engine == 'tokumx':
+            self._logger.info('sync to %s' % ts)
 
     def _replay_oplog_mongodb(self, oplog):
         """ Replay oplog on destination if source is MongoDB.
@@ -530,7 +542,7 @@ class MongoSynchronizer(object):
         # never drop database automatically
         # you should clear the databases manually if necessary
         try:
-            self._sync(self._src_mc)
+            self._sync()
         except exceptions.KeyboardInterrupt:
             self._logger.info('terminating...')
 
