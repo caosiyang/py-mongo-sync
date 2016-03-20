@@ -372,20 +372,23 @@ class MongoSynchronizer(object):
             if collname in self._ignore_colls:
                 continue
             index_info = self._src_mc[dbname][collname].index_information()
-            for val in index_info.itervalues():
-                if 'expireAfterSeconds' in val:
-                    self._dst_mc[dbname][collname].create_index(
-                            format(val['key']),
-                            unique=val.get('unique', False),
-                            dropDups=val.get('dropDups', False),
-                            background=val.get('background', False),
-                            expireAfterSeconds=val.get('expireAfterSeconds'))
-                else:
-                    self._dst_mc[dbname][collname].create_index(
-                            format(val['key']),
-                            unique=val.get('unique', False),
-                            dropDups=val.get('dropDups', False),
-                            background=val.get('background', False))
+            for index in index_info.itervalues():
+                keys = index['key']
+                options = {}
+                if 'unique' in index:
+                    options['unique'] = index['unique']
+                if 'sparse' in index:
+                    options['sparse'] = index['sparse']
+                if 'expireAfterSeconds' in index:
+                    options['expireAfterSeconds'] = index['expireAfterSeconds']
+                if 'partialFilterExpression' in index:
+                    options['partialFilterExpression'] = index['partialFilterExpression']
+                if 'dropDups' in index:
+                    options['dropDups'] = index['dropDups']
+                # create indexes before import documents, ignore 'background' option
+                #if 'background' in index:
+                #    options['background'] = index['background']
+                self._dst_mc[dbname][collname].create_index(format(keys), **options)
 
     def _sync_oplog(self, oplog_start):
         """ Replay oplog.

@@ -16,7 +16,7 @@ def parse_args():
     """
     global g_src, g_src_username, g_src_password, g_dst, g_dst_username, g_dst_password
 
-    parser = argparse.ArgumentParser(description='Sync data from a replica-set to another mongod/replica-set/sharded-cluster.')
+    parser = argparse.ArgumentParser(description='Check data consistency including data and indexes.')
     parser.add_argument('--from', nargs='?', required=True, help='the source must be a mongod instance of replica-set')
     parser.add_argument('--src-username', nargs='?', required=False, help='src username')
     parser.add_argument('--src-password', nargs='?', required=False, help='src password')
@@ -44,7 +44,7 @@ def get_standard_index_name(index_items):
     """
     index_keys = []
     for key, direction in index_items['key']:
-        if isinstance(direction, int) or isinstance(direction, float):
+        if isinstance(direction, int) or isinstance(direction, long) or isinstance(direction, float):
             index_keys.append('%s_%d' % (key, int(direction)))
         elif isinstance(direction, str) or isinstance(direction, unicode):
             index_keys.append('%s_%s' % (key, direction))
