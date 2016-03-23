@@ -83,6 +83,7 @@ class MongoSynchronizer(object):
         """ Sync databases and oplog.
         """
         if self._start_optime:
+            self._logger.info("locating oplog, it will take a while")
             if self._src_engine == 'mongodb':
                 oplog_start = bson.timestamp.Timestamp(int(self._start_optime), 0)
                 doc = self._src_mc['local']['oplog.rs'].find_one({'ts': {'$gte': oplog_start}})
@@ -102,7 +103,7 @@ class MongoSynchronizer(object):
                     self._logger.error('specified oplog not found')
                     return
                 oplog_start = doc['ts']
-            self._logger.info('actual start timestamp is %s' % oplog_start)
+            self._logger.info('start timestamp is %s actually' % oplog_start)
             self._last_optime = oplog_start
             self._sync_oplog(oplog_start)
         else:
@@ -122,7 +123,7 @@ class MongoSynchronizer(object):
         """ Sync databases except 'admin' and 'local'.
         """
         host, port = self._src_mc.primary
-        self._logger.info('[%s] sync databases from %s:%d...' % (self._current_process_name, host, port))
+        self._logger.info('[%s] sync databases from %s:%d' % (self._current_process_name, host, port))
         exclude_dbnames = ['admin', 'local']
         for dbname in self._src_mc.database_names():
             if dbname not in exclude_dbnames:
@@ -395,12 +396,11 @@ class MongoSynchronizer(object):
         """
         try:
             host, port = self._src_mc.primary
-            self._logger.info('try to sync oplog from %s on %s:%d...' % (oplog_start, host, port))
+            self._logger.info('try to sync oplog from %s on %s:%d' % (oplog_start, host, port))
             cursor = self._src_mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
             if cursor[0]['ts'] != oplog_start:
                 self._logger.error('%s is stale, terminate' % oplog_start)
                 return
-            self._logger.info('%s is valid, continue' % oplog_start)
         except IndexError as e:
             self._logger.error(e)
             self._logger.error('%s not found, terminate' % oplog_start)
@@ -409,7 +409,7 @@ class MongoSynchronizer(object):
             self._logger.error(e)
             raise e
 
-        self._logger.info('start replaying oplog...')
+        self._logger.info('replaying oplog')
         n_replayed = 0
         while True:
             try:
@@ -424,9 +424,13 @@ class MongoSynchronizer(object):
                 if self._filter and not self._filter.valid_oplog(oplog):
                     continue
 
-                # make oplog replay successfully
+                # guarantee that replay oplog successfully
+                recovered = False
                 while True:
                     try:
+                        if recovered:
+                            self._logger.info('recovered at %s' % oplog['ts'])
+                            recovered = False
                         self._replay_oplog(oplog)
                         n_replayed += 1
                         if n_replayed % 1000 == 0:
@@ -440,20 +444,26 @@ class MongoSynchronizer(object):
                         break
                     except pymongo.errors.AutoReconnect as e:
                         self._logger.error(e)
+                        self._logger.error('interrupted at %s' % oplog['ts'])
                         self._dst_mc = self.reconnect(
                                 self._dst_host,
                                 self._dst_port,
                                 username=self._dst_username,
                                 password=self._dst_password,
                                 w=self._w)
+                        if self._dst_mc:
+                            recovered = True
                     except pymongo.errors.WriteError as e:
                         self._logger.error(e)
+                        self._logger.error('interrupted at %s' % oplog['ts'])
                         self._dst_mc = self.reconnect(
                                 self._dst_host,
                                 self._dst_port,
                                 username=self._dst_username,
                                 password=self._dst_password,
                                 w=self._w)
+                        if self._dst_mc:
+                            recovered = True
             except StopIteration as e:
                 # there is no oplog to replay now, wait a moment
                 time.sleep(0.1)
@@ -466,6 +476,9 @@ class MongoSynchronizer(object):
                         password=self._src_password,
                         w=self._w)
                 cursor = self._src_mc['local']['oplog.rs'].find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+                if cursor[0]['ts'] != self._last_optime:
+                    self._logger.error('%s is stale, terminate' % self._last_optime)
+                    return
 
     def _replay_oplog(self, oplog):
         if self._src_engine == 'mongodb':
@@ -547,7 +560,7 @@ class MongoSynchronizer(object):
         try:
             self._sync()
         except exceptions.KeyboardInterrupt:
-            self._logger.info('terminating...')
+            self._logger.info('terminating')
 
     def reconnect(self, host, port, **kwargs):
         """ Try to reconnect until done.
