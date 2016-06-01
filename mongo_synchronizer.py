@@ -181,7 +181,7 @@ class MongoSynchronizer(object):
             #    docs = []
             reqs.append(ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
             if len(reqs) == batchsize:
-                self._dst_mc[dbname][collname].bulk_write(reqs, ordered=False)
+                self._bulk_write(dbname, collname, reqs, ordered=False)
                 reqs = []
             n += 1
             if n % 10000 == 0:
@@ -189,7 +189,7 @@ class MongoSynchronizer(object):
         #if len(docs) > 0:
         #    self._dst_mc[dbname][collname].insert_many(docs)
         if len(reqs) > 0:
-            self._dst_mc[dbname][collname].bulk_write(reqs, ordered=False)
+            self._bulk_write(dbname, collname, reqs, ordered=False)
         self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, dbname, collname, n, count, float(n)/count*100))
 
     def _sync_collection_mp2(self, dbname, collname):
@@ -575,16 +575,30 @@ class MongoSynchronizer(object):
             self._logger.info('terminating')
 
     def reconnect(self, host, port, **kwargs):
-        """ Try to reconnect until done.
+        """ Try to reconnect until success.
         """
         while True:
             try:
                 self._logger.info('try to reconnect %s:%d' % (host, port))
                 mc = mongo_helper.mongo_connect(host, port, **kwargs)
-                mc.database_names() # check connection is ok
-                self._logger.info('reconnect ok')
+            except:
+                pass
+            else:
                 return mc
-            except Exception as e:
-                mc.close()
-                self._logger.error(e)
-                time.sleep(1)
+
+    def _bulk_write(self, dbname, collname, requests, ordered=True, bypass_document_validation=False):
+        """ Try to bulk write until success.
+        """
+        while True:
+            try:
+                self._dst_mc[dbname][collname].bulk_write(requests,
+                        ordered=ordered,
+                        bypass_document_validation=bypass_document_validation)
+            except pymongo.errors.AutoReconnect:
+                self._dst_mc = self.reconnect(self._dst_host,
+                        self._dst_port,
+                        username=self._dst_username,
+                        password=self._dst_password,
+                        w=self._w)
+            else:
+                return

@@ -11,28 +11,25 @@ def mongo_connect(host, port, **kwargs):
         read_preference = PRIMARY
         w = 1
     """
-    try:
-        username = kwargs.get('username', '')
-        password = kwargs.get('password', '')
-        auth_db = kwargs.get('auth_db', 'admin') # default auth db is 'admin'
-        w = kwargs.get('w', 1) # default w = 1
-        connect = kwargs.get('connect', True)
-        replset_name = get_replica_set_name(host, port, **kwargs)
-        if replset_name:
-            mc = pymongo.MongoClient(
-                    host=host,
-                    port=port,
-                    replicaSet=replset_name,
-                    read_preference=pymongo.read_preferences.ReadPreference.PRIMARY,
-                    w=w,
-                    connect=connect)
-        else:
-            mc = pymongo.MongoClient(host, port, w=w, connect=connect)
-        if username and password and auth_db:
-            mc[auth_db].authenticate(username, password)
-        return mc
-    except Exception as e:
-        raise Exception('mongo connect %s' % e)
+    username = kwargs.get('username', '')
+    password = kwargs.get('password', '')
+    auth_db = kwargs.get('auth_db', 'admin') # default auth db is 'admin'
+    w = kwargs.get('w', 1) # default w = 1
+    replset_name = get_replica_set_name(host, port, **kwargs)
+    if replset_name:
+        mc = pymongo.MongoClient(
+                host=host,
+                port=port,
+                connect=True,
+                serverSelectionTimeoutMS=3000,
+                replicaSet=replset_name,
+                read_preference=pymongo.read_preferences.ReadPreference.PRIMARY,
+                w=w)
+    else:
+        mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000, w=w)
+    if username and password and auth_db:
+        mc[auth_db].authenticate(username, password)
+    return mc
 
 def get_replica_set_name(host, port, **kwargs):
     """ Get replica set name.
@@ -43,7 +40,7 @@ def get_replica_set_name(host, port, **kwargs):
         username = kwargs.get('username', '')
         password = kwargs.get('password', '')
         auth_db = kwargs.get('auth_db', 'admin')
-        mc = pymongo.MongoClient(host, port)
+        mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000)
         if username and password and auth_db:
             mc[auth_db].authenticate(username, password)
         status = mc.admin.command({'replSetGetStatus': 1})
@@ -54,8 +51,6 @@ def get_replica_set_name(host, port, **kwargs):
             return ''
     except pymongo.errors.OperationFailure as e:
         return ''
-    except Exception as e:
-        raise Exception('get_replica_set_name %s' % e)
 
 def get_primary(host, port, **kwargs):
     """ Get host, port, replsetName of the primary node.
@@ -64,7 +59,7 @@ def get_primary(host, port, **kwargs):
         username = kwargs.get('username', '')
         password = kwargs.get('password', '')
         auth_db = kwargs.get('auth_db', 'admin')
-        mc = pymongo.MongoClient(host, port)
+        mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000)
         if username and password and auth_db:
             mc[auth_db].authenticate(username, password)
         status = mc.admin.command({'replSetGetStatus': 1})
