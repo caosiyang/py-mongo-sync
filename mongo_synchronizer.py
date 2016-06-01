@@ -11,6 +11,7 @@ import bson
 import mongo_helper
 import filter
 from multiprocessing import Process
+from pymongo import ReplaceOne
 from doc_writer import DocWriter
 
 class MongoSynchronizer(object):
@@ -141,6 +142,7 @@ class MongoSynchronizer(object):
         #    Because when you export and import data, duplicate key document may be produced.
         #    Another reason is for TokuMX. It does not support 'dropDups' option for an uniuqe index.
         #    The 'duplicate keys' error must cause index creation failed.
+        self._logger.info("[%s] sync database '%s'" % (self._current_process_name, dbname))
         self._sync_indexes(dbname)
         self._sync_collections(dbname)
 
@@ -158,27 +160,37 @@ class MongoSynchronizer(object):
     def _sync_collection(self, dbname, collname):
         """ Sync a collection through batch write.
         """
-        self._logger.info('[%s] >>>> %s.%s' % (self._current_process_name, dbname, collname))
+        self._logger.info("[%s] sync collection '%s.%s'" % (self._current_process_name, dbname, collname))
         n = 0
-        docs = [] 
+        #docs = [] 
+        reqs = []
         batchsize = 1000
+        count = self._src_mc[dbname][collname].count()
+        if count == 0:
+            self._logger.info('[%s] \t skip empty collection' % (self._current_process_name))
+            return
         cursor = self._src_mc[dbname][collname].find(
                 filter=self._query,
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 no_cursor_timeout=True,
                 modifiers={'$snapshot': True})
         for doc in cursor:
-            docs.append(doc)
-            if len(docs) == batchsize:
-                self._dst_mc[dbname][collname].insert_many(docs)
-                docs = []
+            #docs.append(doc)
+            #if len(docs) == batchsize:
+            #    self._dst_mc[dbname][collname].insert_many(docs)
+            #    docs = []
+            reqs.append(ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
+            if len(reqs) == batchsize:
+                self._dst_mc[dbname][collname].bulk_write(reqs, ordered=False)
+                reqs = []
             n += 1
             if n % 10000 == 0:
-                self._logger.info('[%s] >> %d' % (self._current_process_name, n))
-        if len(docs) > 0:
-            self._dst_mc[dbname][collname].insert_many(docs)
-            n += len(docs)
-        self._logger.info('[%s] ==== %s.%s %d' % (self._current_process_name, dbname, collname, n))
+                self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, dbname, collname, n, count, float(n)/count*100))
+        #if len(docs) > 0:
+        #    self._dst_mc[dbname][collname].insert_many(docs)
+        if len(reqs) > 0:
+            self._dst_mc[dbname][collname].bulk_write(reqs, ordered=False)
+        self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, dbname, collname, n, count, float(n)/count*100))
 
     def _sync_collection_mp2(self, dbname, collname):
         """ Sync a collection with multi-processes.
