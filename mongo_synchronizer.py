@@ -123,7 +123,7 @@ class MongoSynchronizer(object):
     def _sync_databases(self):
         """ Sync databases except 'admin' and 'local'.
         """
-        host, port = self._src_mc.primary
+        host, port = self._src_mc.address
         self._logger.info('[%s] sync databases from %s:%d' % (self._current_process_name, host, port))
         exclude_dbnames = ['admin', 'local']
         for dbname in self._src_mc.database_names():
@@ -416,7 +416,7 @@ class MongoSynchronizer(object):
         """ Replay oplog.
         """
         try:
-            host, port = self._src_mc.primary
+            host, port = self._src_mc.address
             self._logger.info('try to sync oplog from %s on %s:%d' % (oplog_start, host, port))
             cursor = self._src_mc['local']['oplog.rs'].find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
             if cursor[0]['ts'] != oplog_start:
