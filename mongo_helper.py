@@ -79,31 +79,40 @@ def get_primary(host, port, **kwargs):
 
 def get_optime(mc):
     """ Get optime of primary in the replica set.
+
+    Changed in version 3.2.
+    If using protocolVersion: 1, optime returns a document that contains:
+        - ts, the Timestamp of the last operation applied to this member of the replica set from the oplog.
+        - t, the term in which the last applied operation was originally generated on the primary.
+    If using protocolVersion: 0, optime returns the Timestamp of the last operation applied to this member of the replica set from the oplog.
+
+    Refer to https://docs.mongodb.com/manual/reference/command/replSetGetStatus/
     """
-    ts = None
     rs_status = mc['admin'].command({'replSetGetStatus': 1})
     members = rs_status.get('members')
     if members:
         for member in members:
             role = member.get('stateStr')
             if role == 'PRIMARY':
-                ts = member.get('optime')
-                break
-    return ts
+                optime = member.get('optime')
+                if 'ts' in optime: # for MongoDB v3.2
+                    return optime['ts']
+                else:
+                    return optime
+    return None
 
 def get_optime_tokumx(mc):
     """ Get optime of primary in the replica set.
     """
-    ts = None
     rs_status = mc['admin'].command({'replSetGetStatus': 1})
     members = rs_status.get('members')
     if members:
         for member in members:
             role = member.get('stateStr')
             if role == 'PRIMARY':
-                ts = member.get('optimeDate')
-                break
-    return ts
+                optime = member.get('optimeDate')
+                return optime
+    return None
 
 def replay_oplog(oplog, mc):
     """ Replay oplog.

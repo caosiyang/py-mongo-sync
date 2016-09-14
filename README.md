@@ -10,7 +10,7 @@ Source should be a member of replica set and destination could be a mongod/mongo
 - oplog based increment sync
 - a specified collection sync with an optional query
 - support authentication for source and destination
-- source engine could be MongoDB(v2.4 or later) and TokuMX
+- source could be MongoDB(v2.4 or later) and TokuMX
 
 
 ## Note
