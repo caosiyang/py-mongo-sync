@@ -95,7 +95,7 @@ def get_optime(mc):
             role = member.get('stateStr')
             if role == 'PRIMARY':
                 optime = member.get('optime')
-                if 'ts' in optime: # for MongoDB v3.2
+                if isinstance(optime, dict) and 'ts' in optime: # for MongoDB v3.2
                     return optime['ts']
                 else:
                     return optime
