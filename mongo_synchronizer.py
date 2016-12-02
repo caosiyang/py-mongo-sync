@@ -600,15 +600,37 @@ class MongoSynchronizer(object):
         """
         while True:
             try:
-                self._dst_mc[dbname][collname].bulk_write(requests,
+                res = self._dst_mc[dbname][collname].bulk_write(requests,
                         ordered=ordered,
                         bypass_document_validation=bypass_document_validation)
+                return
             except pymongo.errors.AutoReconnect:
+                # reconnect and rewrite
                 self._dst_mc.close()
                 self._dst_mc = self.reconnect(self._dst_host,
                         self._dst_port,
                         username=self._dst_username,
                         password=self._dst_password,
                         w=self._w)
-            else:
+            except pymongo.errors.BulkWriteError as e:
+                self._handle_bulk_write_error(dbname, collname, requests)
                 return
+
+    def _handle_bulk_write_error(self, dbname, collname, requests):
+        """ Write documents one by one to locate the error(s).
+        """
+        for op in requests:
+            while True:
+                try:
+                    res = self._dst_mc[dbname][collname].replace_one(op._filter, op._doc)
+                    break
+                except pymongo.errors.AutoReconnect:
+                    self._dst_mc.close()
+                    self._dst_mc = self.reconnect(self._dst_host,
+                            self._dst_port,
+                            username=self._dst_username,
+                            password=self._dst_password,
+                            w=self._w)
+                except Exception as e:
+                    self._logger.error('%s when excuting %s' % (e, op))
+                    break
