@@ -590,10 +590,10 @@ class MongoSynchronizer(object):
             try:
                 self._logger.info('try to reconnect %s:%d' % (host, port))
                 mc = mongo_helper.mongo_connect(host, port, **kwargs)
-            except:
-                pass
-            else:
+                mc.database_names() # excute command to confirm connection availability
                 return mc
+            except Exception as e:
+                self._logger.error('reconnect failed: %s' % e)
 
     def _bulk_write(self, dbname, collname, requests, ordered=True, bypass_document_validation=False):
         """ Try to bulk write until success.
