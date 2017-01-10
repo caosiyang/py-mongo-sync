@@ -7,13 +7,13 @@ def mongo_connect(host, port, **kwargs):
     Authenticate automatically if necessary.
 
     default:
-        auth_db = admin
+        authdb = admin
         read_preference = PRIMARY
         w = 1
     """
+    authdb = kwargs.get('authdb', 'admin') # default auth db is 'admin'
     username = kwargs.get('username', '')
     password = kwargs.get('password', '')
-    auth_db = kwargs.get('auth_db', 'admin') # default auth db is 'admin'
     w = kwargs.get('w', 1) # default w = 1
     replset_name = get_replica_set_name(host, port, **kwargs)
     if replset_name:
@@ -27,8 +27,8 @@ def mongo_connect(host, port, **kwargs):
                 w=w)
     else:
         mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000, w=w)
-    if username and password and auth_db:
-        mc[auth_db].authenticate(username, password)
+    if username and password and authdb:
+        mc[authdb].authenticate(username, password)
     return mc
 
 def get_replica_set_name(host, port, **kwargs):
@@ -39,10 +39,10 @@ def get_replica_set_name(host, port, **kwargs):
     try:
         username = kwargs.get('username', '')
         password = kwargs.get('password', '')
-        auth_db = kwargs.get('auth_db', 'admin')
+        authdb = kwargs.get('authdb', 'admin')
         mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000)
-        if username and password and auth_db:
-            mc[auth_db].authenticate(username, password)
+        if username and password and authdb:
+            mc[authdb].authenticate(username, password)
         status = mc.admin.command({'replSetGetStatus': 1})
         mc.close()
         if status['ok'] == 1:
@@ -58,10 +58,10 @@ def get_primary(host, port, **kwargs):
     try:
         username = kwargs.get('username', '')
         password = kwargs.get('password', '')
-        auth_db = kwargs.get('auth_db', 'admin')
+        authdb = kwargs.get('authdb', 'admin')
         mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000)
-        if username and password and auth_db:
-            mc[auth_db].authenticate(username, password)
+        if username and password and authdb:
+            mc[authdb].authenticate(username, password)
         status = mc.admin.command({'replSetGetStatus': 1})
         mc.close()
         if status['ok'] == 1:

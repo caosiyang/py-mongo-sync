@@ -38,8 +38,10 @@ class MongoSynchronizer(object):
         self._ignore_colls = ['system.indexes', 'system.profile', 'system.users']
 
         self._src_engine = kwargs.get('src_engine')
+        self._src_authdb = kwargs.get('src_authdb')
         self._src_username = kwargs.get('src_username')
         self._src_password = kwargs.get('src_password')
+        self._dst_authdb = kwargs.get('dst_authdb')
         self._dst_username = kwargs.get('dst_username')
         self._dst_password = kwargs.get('dst_password')
         self._collections = kwargs.get('collections')
@@ -58,6 +60,7 @@ class MongoSynchronizer(object):
         self._src_mc = mongo_helper.mongo_connect(
                 self._src_host,
                 self._src_port,
+                authdb=self._src_authdb,
                 username=self._src_username,
                 password=self._src_password,
                 w=self._w)
@@ -68,6 +71,7 @@ class MongoSynchronizer(object):
         self._dst_mc = mongo_helper.mongo_connect(
                 self._dst_host,
                 self._dst_port,
+                authdb=self._dst_authdb,
                 username=self._dst_username,
                 password=self._dst_password,
                 w=self._w)
