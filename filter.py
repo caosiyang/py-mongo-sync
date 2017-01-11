@@ -1,4 +1,6 @@
 class Filter(object):
+    """ Base filter.
+    """
     def valid_database(self, dbname):
         return True
 
@@ -11,12 +13,14 @@ class Filter(object):
     def valid_oplog(self, oplog):
         return True
 
-
 class DatabaseFilter(Filter):
     """ Database filter.
     """
     def __init__(self):
         self._target_dbs = []
+
+    def add_target_database(self, dbname):
+        self._target_dbs.append(dbname.strip())
 
     def add_target_databases(self, dbname_list):
         self._target_dbs.extend([dbname.strip() for dbname in dbname_list])
@@ -38,13 +42,15 @@ class DatabaseFilter(Filter):
         db = oplog['ns'].split('.', 1)[0]
         return self.valid_database(db)
 
-
 class CollectionFilter(Filter):
     """ Collection filter.
     """
     def __init__(self):
         self._target_colls = []
         self._db_filter = DatabaseFilter()
+
+    def add_target_collection(self, collname):
+        self._target_colls.append(collname.strip())
 
     def add_target_collections(self, collname_list):
         collnames = [collname.strip() for collname in collname_list]
@@ -76,7 +82,7 @@ class CollectionFilter(Filter):
                 return True
         return False
 
-
+# test case
 if __name__ == '__main__':
     # database filter test
     df = DatabaseFilter()
@@ -110,10 +116,10 @@ if __name__ == '__main__':
     oplog4 = {'op': 'i', 'ns': 'db.coll'}
     oplog5 = {'op': 'u', 'ns': 'db.coll1'}
     oplog6 = {'op': 'd', 'ns': 'db1.coll'}
-    oplog7 = {'op': 'c', 'ns': 'db.coll1'}
+    oplog7 = {'op': 'c', 'ns': 'db.$cmd'}
     assert cf.valid_oplog(oplog4)
     assert cf.valid_oplog(oplog5) == False
     assert cf.valid_oplog(oplog6) == False
     assert cf.valid_oplog(oplog7)
 
-    print 'pass all tests'
+    print 'pass'

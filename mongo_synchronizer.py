@@ -44,15 +44,19 @@ class MongoSynchronizer(object):
         self._dst_authdb = kwargs.get('dst_authdb')
         self._dst_username = kwargs.get('dst_username')
         self._dst_password = kwargs.get('dst_password')
-        self._collections = kwargs.get('collections')
-        self._ignore_indexes = kwargs.get('ignore_indexes')
+        self._dbs = kwargs.get('dbs')
+        self._colls = kwargs.get('colls')
         self._query = kwargs.get('query', None)
+        self._ignore_indexes = kwargs.get('ignore_indexes')
         self._start_optime = kwargs.get('start_optime')
         self._w = kwargs.get('write_concern', 1)
 
-        if self._collections:
+        if self._colls:
             self._filter = filter.CollectionFilter()
-            self._filter.add_target_collections(self._collections)
+            self._filter.add_target_collections(self._colls)
+        elif self._dbs:
+            self._filter = filter.DatabaseFilter()
+            self._filter.add_target_databases(self._dbs)
 
         # init src mongo client
         self._src_host = src_hostportstr.split(':')[0]
@@ -392,7 +396,7 @@ class MongoSynchronizer(object):
         if self._ignore_indexes:
             return
 
-        for collname in self._src_mc[dbname].collection_names():
+        for collname in self._src_mc[dbname].collection_names(include_system_collections=False):
             if self._filter and not self._filter.valid_index('%s.%s' % (dbname, collname)):
                 continue
             if collname in self._ignore_colls:
