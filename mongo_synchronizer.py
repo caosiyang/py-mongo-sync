@@ -33,6 +33,8 @@ class MongoSynchronizer(object):
         self._start_optime = None # if true, only sync oplog
         self._last_optime = None # optime of the last oplog has been replayed
         self._logger = logging.getLogger()
+        self._log_interval = 3
+        self._last_logtime = None # use in oplog replay
 
         self._ignore_dbs = ['admin', 'local']
         self._ignore_colls = ['system.indexes', 'system.profile', 'system.users']
@@ -442,6 +444,7 @@ class MongoSynchronizer(object):
             raise e
 
         self._logger.info('replaying oplog')
+        self._set_last_logtime()
         n_replayed = 0
         while True:
             try:
@@ -452,8 +455,8 @@ class MongoSynchronizer(object):
                 # get an oplog
                 oplog = cursor.next()
 
-                # validate oplog
-                if self._filter and not self._filter.valid_oplog(oplog):
+                # validate oplog only for mongodb
+                if self._filter and self._src_engine == 'mongodb' and not self._filter.valid_oplog(oplog):
                     continue
 
                 # guarantee that replay oplog successfully
@@ -499,6 +502,7 @@ class MongoSynchronizer(object):
             except StopIteration as e:
                 # there is no oplog to replay now, wait a moment
                 time.sleep(0.1)
+                self._print_progress(None)
             except pymongo.errors.AutoReconnect:
                 self._src_mc.close()
                 self._src_mc = self.reconnect(
@@ -521,11 +525,18 @@ class MongoSynchronizer(object):
             self._replay_oplog_tokumx(oplog)
 
     def _print_progress(self, oplog):
-        ts = oplog['ts']
-        if self._src_engine == 'mongodb':
-            self._logger.info('sync to %s, %s' % (datetime.datetime.fromtimestamp(ts.time), ts))
-        elif self._src_engine == 'tokumx':
-            self._logger.info('sync to %s' % ts)
+        if oplog:
+            ts = oplog['ts']
+            if self._src_engine == 'mongodb':
+                self._logger.info('sync to %s, %s' % (datetime.datetime.fromtimestamp(ts.time), ts))
+            elif self._src_engine == 'tokumx':
+                self._logger.info('sync to %s' % ts)
+            self._set_last_logtime()
+        else:
+            now = time.time()
+            if now - self._last_logtime > self._log_interval:
+                self._logger.info('all oplog replayed')
+                self._set_last_logtime()
 
     def _replay_oplog_mongodb(self, oplog):
         """ Replay oplog on destination if source is MongoDB.
@@ -647,3 +658,8 @@ class MongoSynchronizer(object):
                 except Exception as e:
                     self._logger.error('%s when excuting %s' % (e, op))
                     break
+
+    def _set_last_logtime(self):
+        """ Set last logtime when replaying oplog.
+        """
+        self._last_logtime = time.time()
