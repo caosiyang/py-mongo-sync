@@ -1,9 +1,7 @@
 import sys
 import time
 import datetime
-import logging
 import exceptions
-import threading
 import multiprocessing
 import Queue
 import pymongo
@@ -13,6 +11,7 @@ import filter
 from multiprocessing import Process
 from pymongo import ReplaceOne
 from doc_writer import DocWriter
+from logger import Logger
 
 class MongoSynchronizer(object):
     """ MongoDB multi-source synchronizer.
@@ -32,7 +31,7 @@ class MongoSynchronizer(object):
         self._w = 1 # write concern, default 1
         self._start_optime = None # if true, only sync oplog
         self._last_optime = None # optime of the last oplog has been replayed
-        self._logger = logging.getLogger()
+        self._logger = Logger.get()
         self._log_interval = 3
         self._last_logtime = None # use in oplog replay
 
