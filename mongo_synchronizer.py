@@ -557,7 +557,7 @@ class MongoSynchronizer(object):
             self._dst_mc[dbname][collname].delete_one(oplog['o'])
         elif op == 'c': # command
             # FIX ISSUE #4 and #5
-            # if use option '--colls' to sync target collecions,
+            # if use option '--colls' to sync target collections,
             # commands on other collections in the same database may replay failed
             try:
                 self._dst_mc[dbname].command(oplog['o'])
