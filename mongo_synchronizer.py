@@ -556,7 +556,13 @@ class MongoSynchronizer(object):
             collname = ns.split('.', 1)[1]
             self._dst_mc[dbname][collname].delete_one(oplog['o'])
         elif op == 'c': # command
-            self._dst_mc[dbname].command(oplog['o'])
+            # FIX ISSUE #4 and #5
+            # if use option '--colls' to sync target collecions,
+            # commands on other collections in the same database may replay failed
+            try:
+                self._dst_mc[dbname].command(oplog['o'])
+            except pymongo.errors.OperationFailure as e:
+                self._logger.error('%s: %s' % (e, op))
         elif op == 'n': # no-op
             pass
         else:
