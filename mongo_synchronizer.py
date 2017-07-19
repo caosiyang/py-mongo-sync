@@ -488,16 +488,19 @@ class MongoSynchronizer(object):
                         if self._dst_mc:
                             recovered = True
                     except pymongo.errors.WriteError as e:
-                        self._logger.error(e)
                         self._logger.error('interrupted at %s' % oplog['ts'])
-                        self._dst_mc = self.reconnect(
-                                self._dst_host,
-                                self._dst_port,
-                                username=self._dst_username,
-                                password=self._dst_password,
-                                w=self._w)
-                        if self._dst_mc:
-                            recovered = True
+                        self._logger.error(e)
+
+                        # TODO
+                        # For case:
+                        #   Update the values of shard key fields when syncing from replica set to sharded cluster.
+                        #
+                        # Once you shard a collection, the shard key and the shard key values are immutable.
+                        # Reference: https://docs.mongodb.com/manual/core/sharding-shard-key/
+
+                        self._logger.info("It's a TODO")
+                        recovered = True
+
             except StopIteration as e:
                 # there is no oplog to replay now, wait a moment
                 time.sleep(0.1)
