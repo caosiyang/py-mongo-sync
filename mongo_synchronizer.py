@@ -42,6 +42,7 @@ class MongoSynchronizer(object):
         self._src_authdb = kwargs.get('src_authdb')
         self._src_username = kwargs.get('src_username')
         self._src_password = kwargs.get('src_password')
+
         self._dst_authdb = kwargs.get('dst_authdb')
         self._dst_username = kwargs.get('dst_username')
         self._dst_password = kwargs.get('dst_password')
@@ -80,6 +81,8 @@ class MongoSynchronizer(object):
                 username=self._dst_username,
                 password=self._dst_password,
                 w=self._w)
+
+        self._dst_is_mongos = self._dst_mc.is_mongos
 
     def __del__(self):
         """ Destructor.
@@ -491,14 +494,34 @@ class MongoSynchronizer(object):
                         self._logger.error('interrupted at %s' % oplog['ts'])
                         self._logger.error(e)
 
-                        # TODO
                         # For case:
                         #   Update the values of shard key fields when syncing from replica set to sharded cluster.
                         #
                         # Once you shard a collection, the shard key and the shard key values are immutable.
                         # Reference: https://docs.mongodb.com/manual/core/sharding-shard-key/
+                        if self._dst_is_mongos and oplog['op'] == 'u' and 'the (immutable) field' in str(e):
+                            db, coll = mongo_helper.parse_namespace(oplog['ns'])
+                            old_doc = self._dst_mc[db][coll].find_one(oplog['o2'])
+                            if not old_doc:
+                                self._logger.error('replay update failed: document not found:', oplog['o2'])
+                                sys.exit(1)
+                            if '$set' in oplog['o']:
+                                new_doc = old_doc.update(oplog['o']['$set'])
+                            else:
+                                new_doc = oplog['o']
 
-                        self._logger.info("It's a TODO")
+                            # TODO: here need a transaction to delete old and insert new
+                            # delete old document
+                            res = self._dst_mc[db][coll].delete_one(oplog['o2'])
+                            if res.deleted_count != 1:
+                                self._logger.error('replay update failed: delete old document failed:', oplog['o2'])
+                                sys.exit(1)
+                            # insert new document
+                            res = self._dst_mc[db][coll].insert_one(new_doc)
+                            if not res.inserted_id:
+                                self._logger.error('replay update failed: insert new document failed:', new_doc)
+                                sys.exit(1)
+
                         recovered = True
 
             except StopIteration as e:

@@ -119,3 +119,10 @@ def replay_oplog(oplog, mc):
     """
     pass
 
+def parse_namespace(ns):
+    """ Parse namespace.
+    """
+    res = ns.split('.', 1)
+    return res[0], res[1]
+
+    
