@@ -16,7 +16,6 @@ class CommandOptions(object):
         self.dbs = []
         self.colls = []
         self.start_optime = ''
-        self.write_concern = 1
         self.logfilepath = ''
 
     def parse(self):
@@ -28,14 +27,13 @@ class CommandOptions(object):
         parser.add_argument('--src-username', nargs='?', required=False, help='src username')
         parser.add_argument('--src-password', nargs='?', required=False, help='src password')
         parser.add_argument('--src-engine', nargs='?', required=False, help='src engine, the value could be mongodb or tokumx, default is mongodb')
-        parser.add_argument('--to', nargs='?', required=True, help='the destionation should be a mongos or mongod instance')
+        parser.add_argument('--to', nargs='?', required=True, help='the destination should be a mongos or mongod instance')
         parser.add_argument('--dst-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
         parser.add_argument('--dst-username', nargs='?', required=False, help='dst username')
         parser.add_argument('--dst-password', nargs='?', required=False, help='dst password')
         parser.add_argument('--dbs', nargs='+', required=False, help='databases to sync, conflict with --colls')
         parser.add_argument('--colls', nargs='+', required=False, help='collections to sync, conflict with --dbs')
         parser.add_argument('--start-optime', nargs='?', required=False, help="start optime, a timestamp value in second for MongoDB or a 'YYYYmmddHHMMSS' value for TokuMX")
-        parser.add_argument('--write-concern', nargs='?', required=False, help='write concern, default 1')
         parser.add_argument('--log', nargs='?', required=False, help='log file path')
 
         args = vars(parser.parse_args())
@@ -78,9 +76,6 @@ class CommandOptions(object):
 
         if args['start_optime'] != None:
             self.start_optime = args['start_optime']
-
-        if args['write_concern'] != None:
-            self.write_concern = int(args['write_concern'])
 
         if args['log'] != None:
             self.logfilepath = args['log']

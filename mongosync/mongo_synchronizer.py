@@ -51,7 +51,6 @@ class MongoSynchronizer(object):
         self._query = kwargs.get('query', None)
         self._ignore_indexes = kwargs.get('ignore_indexes')
         self._start_optime = kwargs.get('start_optime')
-        self._w = kwargs.get('write_concern', 1)
 
         if self._colls:
             self._filter = filter.CollectionFilter()

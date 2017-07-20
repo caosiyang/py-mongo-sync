@@ -36,7 +36,6 @@ if __name__ == '__main__':
     logger.info('databases       :  %s' % opts.dbs)
     logger.info('collections     :  %s' % opts.colls)
     logger.info('start optime    :  %s' % opts.start_optime)
-    logger.info('write concern   :  %s' % opts.write_concern)
     logger.info('log filepath    :  %s' % opts.logfilepath)
     logger.info('pymongo version :  %s' % pymongo.version)
     logger.info('================================================')
@@ -54,8 +53,7 @@ if __name__ == '__main__':
             dbs=opts.dbs,
             colls=opts.colls,
             ignore_indexes=False,
-            start_optime=opts.start_optime,
-            write_concern=opts.write_concern)
+            start_optime=opts.start_optime)
     syncer.run()
     logger.info('exit')
 

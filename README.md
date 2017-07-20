@@ -57,7 +57,7 @@ optional arguments:
   --src-engine [SRC_ENGINE]
                         src engine, the value could be mongodb or tokumx,
                         default is mongodb
-  --to [TO]             the destionation should be a mongos or mongod instance
+  --to [TO]             the destination should be a mongos or mongod instance
   --dst-authdb [DST_AUTHDB]
                         authentication database, default is 'admin'
   --dst-username [DST_USERNAME]
@@ -70,8 +70,6 @@ optional arguments:
   --start-optime [START_OPTIME]
                         start optime, a timestamp value in second for MongoDB
                         or a 'YYYYmmddHHMMSS' value for TokuMX
-  --write-concern [WRITE_CONCERN]
-                        write concern, default 1
   --log [LOG]           log file path
 
 ```
