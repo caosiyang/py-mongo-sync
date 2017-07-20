@@ -14,7 +14,7 @@ from doc_writer import DocWriter
 from logger import Logger
 
 class MongoSynchronizer(object):
-    """ MongoDB multi-source synchronizer.
+    """ MongoDB synchronizer.
     """
     def __init__(self, src_hostportstr, dst_hostportstr, **kwargs):
         """ Constructor.

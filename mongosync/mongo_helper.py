@@ -1,4 +1,3 @@
-import sys
 import pymongo
 
 def mongo_connect(host, port, **kwargs):
@@ -125,4 +124,3 @@ def parse_namespace(ns):
     res = ns.split('.', 1)
     return res[0], res[1]
 
-    

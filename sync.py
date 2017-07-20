@@ -5,11 +5,10 @@
 # author: caosiyang
 # date: 2013/09/16
 
-import sys
 import pymongo
-import mongo_synchronizer
-from command_options import CommandOptions
-from logger import Logger
+from mongosync.mongo_synchronizer import MongoSynchronizer
+from mongosync.command_options import CommandOptions
+from mongosync.logger import Logger
 
 if __name__ == '__main__':
     opts = CommandOptions()
@@ -42,7 +41,7 @@ if __name__ == '__main__':
     logger.info('pymongo version :  %s' % pymongo.version)
     logger.info('================================================')
  
-    syncer = mongo_synchronizer.MongoSynchronizer(
+    syncer = MongoSynchronizer(
             opts.src_hostportstr,
             opts.dst_hostportstr,
             src_authdb=opts.src_authdb,
