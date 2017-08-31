@@ -220,7 +220,7 @@ class MongoSynchronizer(object):
                         self._bulk_write(dst_dbname, dst_collname, reqs, ordered=False)
                         reqs = []
                     n += 1
-                    if n % 1000 == 0:
+                    if n % 10000 == 0:
                         self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, src_dbname, src_collname, n, count, float(n)/count*100))
                 #if len(docs) > 0:
                 #    self._dst_mc[dst_dbname][dst_collname].insert_many(docs)
@@ -584,14 +584,14 @@ class MongoSynchronizer(object):
         if oplog:
             ts = oplog['ts']
             if self._src_engine == 'mongodb':
-                self._logger.info('sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(ts.time), ts, self.from_to))
+                self._logger.info('%s, sync to %s, %s' % (self.from_to, datetime.datetime.fromtimestamp(ts.time), ts))
             elif self._src_engine == 'tokumx':
-                self._logger.info('sync to %s' % ts)
+                self._logger.info('%s, sync to %s' % (self.from_to, ts))
             self._set_last_logtime()
         else:
             now = time.time()
             if now - self._last_logtime > self._log_interval:
-                self._logger.info('no more oplog, sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime, self.from_to))
+                self._logger.info('%s, no more oplog, sync to %s, %s, %s' % (self.from_to, datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime))
                 self._set_last_logtime()
 
     def _replay_oplog_mongodb(self, oplog):

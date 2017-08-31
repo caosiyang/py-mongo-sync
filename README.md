@@ -84,16 +84,15 @@ optional arguments:
 
 ```
 
-### validate
+### check
 
 ```bash
-usage: check_consistency.py [-h] --from [FROM] [--src-authdb [SRC_AUTHDB]]
-                            [--src-username [SRC_USERNAME]]
-                            [--src-password [SRC_PASSWORD]] --to [TO]
-                            [--dst-authdb [DST_AUTHDB]]
-                            [--dst-username [DST_USERNAME]]
-                            [--dst-password [DST_PASSWORD]]
-                            [--dbs DBS [DBS ...]]
+usage: check.py [-h] --from [FROM] [--src-authdb [SRC_AUTHDB]]
+                [--src-username [SRC_USERNAME]]
+                [--src-password [SRC_PASSWORD]] --to [TO]
+                [--dst-authdb [DST_AUTHDB]] [--dst-username [DST_USERNAME]]
+                [--dst-password [DST_PASSWORD]] [--dbs DBS [DBS ...]]
+                [--src-db [SRC_DB]] [--dst-db [DST_DB]]
 
 Check data consistency including data and indexes.
 
@@ -114,5 +113,9 @@ optional arguments:
   --dst-password [DST_PASSWORD]
                         dst password
   --dbs DBS [DBS ...]   databases to check
+  --src-db [SRC_DB]     src database to check, work with '--dst-db', conflict
+                        with '--dbs'
+  --dst-db [DST_DB]     dst database to check, work with '--src-db', conflict
+                        with '--dbs'
 ```
 

@@ -114,3 +114,75 @@ class CommandOptions(object):
 
         return True
 
+
+class CheckCommandOptions(object):
+    """ Check command options.
+    """
+    def __init__(self):
+        self.src_hostportstr = ''
+        self.src_authdb = 'admin'
+        self.src_username = ''
+        self.src_password = ''
+        self.dst_hostportstr = ''
+        self.dst_authdb = 'admin'
+        self.dst_username = ''
+        self.dst_password = ''
+        self.dbs = []
+        self.src_db = ''
+        self.dst_db = ''
+
+    def parse(self):
+        """ Parse command options.
+        """
+        parser = argparse.ArgumentParser(description='Check data consistency including data and indexes.')
+        parser.add_argument('--from', nargs='?', required=True, help='the source must be a mongod instance of replica-set')
+        parser.add_argument('--src-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
+        parser.add_argument('--src-username', nargs='?', required=False, help='src username')
+        parser.add_argument('--src-password', nargs='?', required=False, help='src password')
+        parser.add_argument('--to', nargs='?', required=True, help='the destionation should be a mongos or mongod instance')
+        parser.add_argument('--dst-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
+        parser.add_argument('--dst-username', nargs='?', required=False, help='dst username')
+        parser.add_argument('--dst-password', nargs='?', required=False, help='dst password')
+        parser.add_argument('--dbs', nargs='+', required=False, help='databases to check')
+        parser.add_argument('--src-db', nargs='?', required=False, help="src database to check, work with '--dst-db', conflict with '--dbs'")
+        parser.add_argument('--dst-db', nargs='?', required=False, help="dst database to check, work with '--src-db', conflict with '--dbs'")
+
+        args = vars(parser.parse_args())
+        if args['from'] != None:
+            self.src_hostportstr = args['from']
+        if args['src_authdb'] != None:
+            self.src_authdb = args['src_authdb']
+        if args['src_username'] != None:
+            self.src_username = args['src_username']
+        if args['src_password'] != None:
+            self.src_password = args['src_password']
+        if args['to'] != None:
+            self.dst_hostportstr = args['to']
+        if args['dst_authdb'] != None:
+            self.dst_authdb = args['dst_authdb']
+        if args['dst_username'] != None:
+            self.dst_username = args['dst_username']
+        if args['dst_password'] != None:
+            self.dst_password = args['dst_password']
+        if args['dbs'] != None:
+            self.dbs = args['dbs']
+        if args['src_db'] != None:
+            self.src_db = args['src_db']
+        if args['dst_db'] != None:
+            self.dst_db = args['dst_db']
+
+        if self.dbs and (self.src_db or self.dst_db):
+            print "Terminated, conflict command options found"
+            sys.exit(1)
+        if self.src_db and not self.dst_db:
+            print "Terminated, require command option '--dst-db'"
+            sys.exit(1)
+        if self.dst_db and not self.src_db:
+            print "Terminated, require command option '--src-db'"
+            sys.exit(1)
+        if self.src_db and self.dst_db and self.src_db == self.dst_db:
+            print 'Terminated, src_db is same as dst_db'
+            sys.exit(1)
+
+        return True
+
