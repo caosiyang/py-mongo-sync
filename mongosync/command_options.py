@@ -1,3 +1,4 @@
+import sys
 import argparse
 
 class CommandOptions(object):
@@ -15,6 +16,8 @@ class CommandOptions(object):
         self.dst_password = ''
         self.dbs = []
         self.colls = []
+        self.src_db = ''
+        self.dst_db = ''
         self.start_optime = ''
         self.logfilepath = ''
 
@@ -22,17 +25,19 @@ class CommandOptions(object):
         """ Parse command options.
         """
         parser = argparse.ArgumentParser(description='Sync data from a replica-set to another mongod/replica-set/sharded-cluster.')
-        parser.add_argument('--from', nargs='?', required=True, help='the source must be a member of replica-set')
+        parser.add_argument('--from', nargs='?', required=True, help='source must be a member of replica-set')
         parser.add_argument('--src-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
         parser.add_argument('--src-username', nargs='?', required=False, help='src username')
         parser.add_argument('--src-password', nargs='?', required=False, help='src password')
         parser.add_argument('--src-engine', nargs='?', required=False, help='src engine, the value could be mongodb or tokumx, default is mongodb')
-        parser.add_argument('--to', nargs='?', required=True, help='the destination should be a mongos or mongod instance')
+        parser.add_argument('--to', nargs='?', required=True, help='destination should be a mongos or mongod instance')
         parser.add_argument('--dst-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
         parser.add_argument('--dst-username', nargs='?', required=False, help='dst username')
         parser.add_argument('--dst-password', nargs='?', required=False, help='dst password')
-        parser.add_argument('--dbs', nargs='+', required=False, help='databases to sync, conflict with --colls')
-        parser.add_argument('--colls', nargs='+', required=False, help='collections to sync, conflict with --dbs')
+        parser.add_argument('--dbs', nargs='+', required=False, help="databases to sync, conflict with '--colls'")
+        parser.add_argument('--colls', nargs='+', required=False, help="collections to sync, conflict with '--dbs'")
+        parser.add_argument('--src-db', nargs='?', required=False, help="src database name, work with '--dst-db', conflict with '--dbs' and '--colls'")
+        parser.add_argument('--dst-db', nargs='?', required=False, help="dst database name, work with '--src-db', conflict with '--dbs' and '--colls'")
         parser.add_argument('--start-optime', nargs='?', required=False, help="start optime, a timestamp value in second for MongoDB or a 'YYYYmmddHHMMSS' value for TokuMX")
         parser.add_argument('--log', nargs='?', required=False, help='log file path')
 
@@ -74,14 +79,38 @@ class CommandOptions(object):
         if args['colls'] != None:
             self.colls = args['colls']
 
+        if args['src_db'] != None:
+            self.src_db = args['src_db']
+
+        if args['dst_db'] != None:
+            self.dst_db = args['dst_db']
+
         if args['start_optime'] != None:
             self.start_optime = args['start_optime']
 
         if args['log'] != None:
             self.logfilepath = args['log']
 
-        if self.dbs and self.colls:
-            print 'conflict options: --dbs --colls, terminate'
+        conflict = False
+        conflict = conflict or (self.dbs and (self.colls or self.src_db or self.dst_db))
+        conflict = conflict or (self.colls and (self.dbs or self.src_db or self.dst_db))
+        conflict = conflict or (self.src_db and (self.dbs or self.colls))
+        conflict = conflict or (self.dst_db and (self.dbs or self.colls))
+        if conflict:
+            print "Terminated, conflict command options found"
+            sys.exit(1)
+
+        if self.src_db and not self.dst_db:
+            print "Terminated, require command option '--dst-db'"
+            sys.exit(1)
+
+        if self.dst_db and not self.src_db:
+            print "Terminated, require command option '--src-db'"
+            sys.exit(1)
+
+        if self.src_db and self.dst_db and self.src_db == self.dst_db:
+            print 'Terminated, src_db is same as dst_db'
             sys.exit(1)
 
         return True
+

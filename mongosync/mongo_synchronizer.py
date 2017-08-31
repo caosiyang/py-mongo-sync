@@ -27,12 +27,11 @@ class MongoSynchronizer(object):
         self._src_mc = None
         self._dst_mc = None
         self._filter = None
-        self._query = None
         self._w = 1 # write concern, default 1
         self._start_optime = None # if true, only sync oplog
         self._last_optime = None # optime of the last oplog has been replayed
         self._logger = Logger.get()
-        self._log_interval = 3
+        self._log_interval = 1
         self._last_logtime = None # use in oplog replay
 
         self._ignore_dbs = ['admin', 'local']
@@ -46,11 +45,16 @@ class MongoSynchronizer(object):
         self._dst_authdb = kwargs.get('dst_authdb')
         self._dst_username = kwargs.get('dst_username')
         self._dst_password = kwargs.get('dst_password')
-        self._dbs = kwargs.get('dbs')
-        self._colls = kwargs.get('colls')
-        self._query = kwargs.get('query', None)
+        self._dbs = kwargs.get('dbs', [])
+        self._colls = kwargs.get('colls', [])
+        self._src_db = kwargs.get('src_db', '')
+        self._dst_db = kwargs.get('dst_db', '')
         self._ignore_indexes = kwargs.get('ignore_indexes')
         self._start_optime = kwargs.get('start_optime')
+
+        if self.rename_db_mode:
+            assert len(self._dbs) == 0
+            self._dbs.append(self._src_db)
 
         if self._colls:
             self._filter = filter.CollectionFilter()
@@ -90,6 +94,22 @@ class MongoSynchronizer(object):
             self._src_mc.close()
         if self._dst_mc:
             self._dst_mc.close()
+
+    @property
+    def rename_db_mode(self):
+        return self._src_db and self._dst_db
+
+    @property
+    def src_hostportstr(self):
+        return '%s:%d' % (self._src_host, self._src_port)
+
+    @property
+    def dst_hostportstr(self):
+        return '%s:%d' % (self._dst_host, self._dst_port)
+
+    @property
+    def from_to(self):
+        return "%s => %s" % (self.src_hostportstr, self.dst_hostportstr)
 
     def _sync(self):
         """ Sync databases and oplog.
@@ -136,9 +156,9 @@ class MongoSynchronizer(object):
         """
         host, port = self._src_mc.address
         self._logger.info('[%s] sync databases from %s:%d' % (self._current_process_name, host, port))
-        exclude_dbnames = ['admin', 'local']
+        ignore_dbnames = ['admin', 'local']
         for dbname in self._src_mc.database_names():
-            if dbname not in exclude_dbnames:
+            if dbname not in ignore_dbnames:
                 if self._filter and not self._filter.valid_database(dbname):
                     continue
                 self._sync_database(dbname)
@@ -166,19 +186,23 @@ class MongoSynchronizer(object):
                 continue
             if collname in self._ignore_colls:
                 continue
-            self._sync_collection(dbname, collname)
+            if self.rename_db_mode:
+                assert dbname == self._src_db
+                self._sync_collection(dbname, collname, self._dst_db, collname)
+            else:
+                self._sync_collection(dbname, collname, dbname, collname)
 
-    def _sync_collection(self, dbname, collname):
+    def _sync_collection(self, src_dbname, src_collname, dst_dbname, dst_collname):
         """ Sync a collection through batch write.
         """
-        self._logger.info("[%s] sync collection '%s.%s'" % (self._current_process_name, dbname, collname))
+        self._logger.info("[%s] sync collection '%s.%s'" % (self._current_process_name, src_dbname, src_collname))
         while True:
             try:
                 n = 0
                 #docs = [] 
                 reqs = []
                 batchsize = 1000
-                cursor = self._src_mc[dbname][collname].find(filter=self._query,
+                cursor = self._src_mc[src_dbname][src_collname].find(filter=None,
                                                              cursor_type=pymongo.cursor.CursorType.EXHAUST,
                                                              no_cursor_timeout=True,
                                                              modifiers={'$snapshot': True})
@@ -189,20 +213,20 @@ class MongoSynchronizer(object):
                 for doc in cursor:
                     #docs.append(doc)
                     #if len(docs) == batchsize:
-                    #    self._dst_mc[dbname][collname].insert_many(docs)
+                    #    self._dst_mc[dst_dbname][dst_collname].insert_many(docs)
                     #    docs = []
                     reqs.append(ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
                     if len(reqs) == batchsize:
-                        self._bulk_write(dbname, collname, reqs, ordered=False)
+                        self._bulk_write(dst_dbname, dst_collname, reqs, ordered=False)
                         reqs = []
                     n += 1
-                    if n % 10000 == 0:
-                        self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, dbname, collname, n, count, float(n)/count*100))
+                    if n % 1000 == 0:
+                        self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, src_dbname, src_collname, n, count, float(n)/count*100))
                 #if len(docs) > 0:
-                #    self._dst_mc[dbname][collname].insert_many(docs)
+                #    self._dst_mc[dst_dbname][dst_collname].insert_many(docs)
                 if len(reqs) > 0:
-                    self._bulk_write(dbname, collname, reqs, ordered=False)
-                self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, dbname, collname, n, count, float(n)/count*100))
+                    self._bulk_write(dst_dbname, dst_collname, reqs, ordered=False)
+                    self._logger.info('[%s] \t %s.%s %d/%d (%.2f%%)' % (self._current_process_name, src_dbname, src_collname, n, count, float(n)/count*100))
                 return
             except pymongo.errors.AutoReconnect:
                 self._src_mc.close()
@@ -220,7 +244,7 @@ class MongoSynchronizer(object):
         dw = DocWriter(self._dst_host, self._dst_port, dbname, collname)
         n = 0
         cursor = self._src_mc[dbname][collname].find(
-                filter=self._query,
+                filter=None,
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 no_cursor_timeout=True,
                 modifiers={'$snapshot': True})
@@ -248,7 +272,7 @@ class MongoSynchronizer(object):
             processes.append(p)
         n = 0
         cursor = self._src_mc[dbname][collname].find(
-                filter=self._query,
+                filter=None,
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 no_cursor_timeout=True,
                 modifiers={'$snapshot': True})
@@ -422,7 +446,11 @@ class MongoSynchronizer(object):
                 # create indexes before import documents, ignore 'background' option
                 #if 'background' in info:
                 #    options['background'] = info['background']
-                self._dst_mc[dbname][collname].create_index(format(keys), **options)
+                if self.rename_db_mode:
+                    assert dbname == self._src_db
+                    self._dst_mc[self._dst_db][collname].create_index(format(keys), **options)
+                else:
+                    self._dst_mc[dbname][collname].create_index(format(keys), **options)
 
     def _sync_oplog(self, oplog_start):
         """ Replay oplog.
@@ -446,6 +474,8 @@ class MongoSynchronizer(object):
 
         self._logger.info('replaying oplog')
         self._set_last_logtime()
+        n_total = 0
+        n_skip = 0
         n_replayed = 0
         while True:
             try:
@@ -455,9 +485,11 @@ class MongoSynchronizer(object):
 
                 # get an oplog
                 oplog = cursor.next()
+                n_total += 1
 
                 # validate oplog only for mongodb
                 if self._filter and self._src_engine == 'mongodb' and not self._filter.valid_oplog(oplog):
+                    n_skip += 1
                     continue
 
                 # guarantee that replay oplog successfully
@@ -552,14 +584,14 @@ class MongoSynchronizer(object):
         if oplog:
             ts = oplog['ts']
             if self._src_engine == 'mongodb':
-                self._logger.info('sync to %s, %s' % (datetime.datetime.fromtimestamp(ts.time), ts))
+                self._logger.info('sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(ts.time), ts, self.from_to))
             elif self._src_engine == 'tokumx':
                 self._logger.info('sync to %s' % ts)
             self._set_last_logtime()
         else:
             now = time.time()
             if now - self._last_logtime > self._log_interval:
-                self._logger.info('all oplog replayed')
+                self._logger.info('no more oplog, sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime, self.from_to))
                 self._set_last_logtime()
 
     def _replay_oplog_mongodb(self, oplog):
@@ -570,6 +602,11 @@ class MongoSynchronizer(object):
         op = oplog['op'] # 'n' or 'i' or 'u' or 'c' or 'd'
         ns = oplog['ns']
         dbname = ns.split('.', 1)[0]
+
+        if self.rename_db_mode:
+            assert dbname == self._src_db
+            dbname = self._dst_db
+
         if op == 'i': # insert
             collname = ns.split('.', 1)[1]
             self._dst_mc[dbname][collname].insert_one(oplog['o'])
@@ -601,21 +638,36 @@ class MongoSynchronizer(object):
             if op['op'] == 'i':
                 dbname = op['ns'].split('.', 1)[0]
                 collname = op['ns'].split('.', 1)[1]
+                if self.rename_db_mode:
+                    assert dbname == self._src_db
+                    dbname = self._dst_db
                 self._dst_mc[dbname][collname].insert_one(op['o'])
             elif op['op'] == 'u':
                 dbname = op['ns'].split('.', 1)[0]
                 collname = op['ns'].split('.', 1)[1]
+                if self.rename_db_mode:
+                    assert dbname == self._src_db
+                    dbname = self._dst_db
                 self._dst_mc[dbname][collname].update({'_id': op['o']['_id']}, op['o2'])
             elif op['op'] == 'ur':
                 dbname = op['ns'].split('.', 1)[0]
                 collname = op['ns'].split('.', 1)[1]
+                if self.rename_db_mode:
+                    assert dbname == self._src_db
+                    dbname = self._dst_db
                 self._dst_mc[dbname][collname].update({'_id': op['pk']['']}, op['m'])
             elif op['op'] == 'd':
                 dbname = op['ns'].split('.', 1)[0]
                 collname = op['ns'].split('.', 1)[1]
+                if self.rename_db_mode:
+                    assert dbname == self._src_db
+                    dbname = self._dst_db
                 self._dst_mc[dbname][collname].remove({'_id': op['o']['_id']})
             elif op['op'] == 'c':
                 dbname = op['ns'].split('.', 1)[0]
+                if self.rename_db_mode:
+                    assert dbname == self._src_db
+                    dbname = self._dst_db
                 self._dst_mc[dbname].command(op['o'])
             elif op['op'] == 'n':
                 pass

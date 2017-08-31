@@ -35,6 +35,8 @@ if __name__ == '__main__':
     logger.info('dst password    :  %s' % opts.dst_password)
     logger.info('databases       :  %s' % opts.dbs)
     logger.info('collections     :  %s' % opts.colls)
+    logger.info('src db          :  %s' % opts.src_db)
+    logger.info('dst db          :  %s' % opts.dst_db)
     logger.info('start optime    :  %s' % opts.start_optime)
     logger.info('log filepath    :  %s' % opts.logfilepath)
     logger.info('pymongo version :  %s' % pymongo.version)
@@ -52,6 +54,8 @@ if __name__ == '__main__':
             dst_password=opts.dst_password,
             dbs=opts.dbs,
             colls=opts.colls,
+            src_db=opts.src_db,
+            dst_db=opts.dst_db,
             ignore_indexes=False,
             start_optime=opts.start_optime)
     syncer.run()

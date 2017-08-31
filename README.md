@@ -1,34 +1,39 @@
 # py-mongo-sync
 
-A oplog based realtime sync tool for MongoDB written in Python.
-Source should be a member of replica set and destination could be a mongod/replica-set/sharded-cluster.
+An oplog-based realtime sync tool for MongoDB written in Python.
 
 
 ## Features
 
-- full sync including data and indexes and oplog based increment sync
-- sync the specified databases or collections
-- source could be MongoDB(v2.4 or later) and TokuMX
+- full sync including data and indexes
+- oplog-based incremental sync
+- sync the specified databases
+- sync the specified collections
+- support MongoDB(v2.4 or later) and TokuMX
 
 
 ## Notes
 
-- the following databases are ignored: 'admin', 'local'
-- the following collections are ignored: 'system.users', 'system.profile'
-- you need to create users for destination manually
-- if authencation is enabled, you should use a root user to authenticate
+- source must be a replica set
+- Ignore the following databases:
+    - admin
+    - local
+- ignore the following collections
+    - system.users
+    - system.profile
+- create users for destination manually if necessary
+- run as superuser through setting '--src-username' and '--src-password' if source authentication is enabled
+- you could sync a sharded-cluster by running a process for each shard, first of all, guarantee that balancer is off
 
 
 ## Not Supported
 
 - geospatial index
-- users information
 
 
 ## Dependency
 
 - pymongo 3.0 or later
-
 
 ## Usage 
 
@@ -40,8 +45,9 @@ usage: sync.py [-h] --from [FROM] [--src-authdb [SRC_AUTHDB]]
                [--src-engine [SRC_ENGINE]] --to [TO]
                [--dst-authdb [DST_AUTHDB]] [--dst-username [DST_USERNAME]]
                [--dst-password [DST_PASSWORD]] [--dbs DBS [DBS ...]]
-               [--colls COLLS [COLLS ...]] [--start-optime [START_OPTIME]]
-               [--write-concern [WRITE_CONCERN]] [--log [LOG]]
+               [--colls COLLS [COLLS ...]] [--src-db [SRC_DB]]
+               [--dst-db [DST_DB]] [--start-optime [START_OPTIME]]
+               [--log [LOG]]
 
 Sync data from a replica-set to another mongod/replica-set/sharded-cluster.
 
@@ -67,6 +73,10 @@ optional arguments:
   --dbs DBS [DBS ...]   databases to sync, conflict with --colls
   --colls COLLS [COLLS ...]
                         collections to sync, conflict with --dbs
+  --src-db [SRC_DB]     src database name, work with '--dst-db', conflict with
+                        '--dbs' and '--colls'
+  --dst-db [DST_DB]     dst database name, work with '--src-db', conflict with
+                        '--dbs' and '--colls'
   --start-optime [START_OPTIME]
                         start optime, a timestamp value in second for MongoDB
                         or a 'YYYYmmddHHMMSS' value for TokuMX
