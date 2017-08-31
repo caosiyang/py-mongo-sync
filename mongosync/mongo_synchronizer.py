@@ -111,6 +111,16 @@ class MongoSynchronizer(object):
     def from_to(self):
         return "%s => %s" % (self.src_hostportstr, self.dst_hostportstr)
 
+    @property
+    def log_interval(self):
+        return self._log_interval
+
+    @log_interval.setter
+    def log_interval(self, n_secs):
+        if n_secs < 0:
+            n_secs = 0
+        self._log_interval = n_secs
+
     def _sync(self):
         """ Sync databases and oplog.
         """
@@ -591,7 +601,7 @@ class MongoSynchronizer(object):
         else:
             now = time.time()
             if now - self._last_logtime > self._log_interval:
-                self._logger.info('%s, no more oplog, sync to %s, %s, %s' % (self.from_to, datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime))
+                self._logger.info('%s, no more oplog, sync to %s, %s' % (self.from_to, datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime))
                 self._set_last_logtime()
 
     def _replay_oplog_mongodb(self, oplog):
