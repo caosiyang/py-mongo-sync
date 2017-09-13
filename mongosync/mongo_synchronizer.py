@@ -471,7 +471,7 @@ class MongoSynchronizer(object):
             # set codec options to guarantee the order of keys in command
             coll = self._src_mc['local'].get_collection('oplog.rs', codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
             cursor = coll.find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
-            if cursor[0]['ts'] != oplog_start:
+            if cursor.next()['ts'] != oplog_start:
                 self._logger.error('%s is stale, terminate' % oplog_start)
                 return
         except IndexError as e:
@@ -580,7 +580,7 @@ class MongoSynchronizer(object):
                 # set codec options  to guarantee the order of keys in command
                 coll = self._src_mc['local'].get_collection('oplog.rs', codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
                 cursor = coll.find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
-                if cursor[0]['ts'] != self._last_optime:
+                if cursor.next()['ts'] != self._last_optime:
                     self._logger.error('%s is stale, terminate' % self._last_optime)
                     return
 
