@@ -87,6 +87,9 @@ class MongoSynchronizer(object):
 
         self._dst_is_mongos = self._dst_mc.is_mongos
 
+        self._src_version = mongo_helper.get_version(self._src_host, self._src_port)
+        self._dst_version = mongo_helper.get_version(self._dst_host, self._dst_port)
+
     def __del__(self):
         """ Destructor.
         """
@@ -470,7 +473,12 @@ class MongoSynchronizer(object):
             self._logger.info('try to sync oplog from %s on %s:%d' % (oplog_start, host, port))
             # set codec options to guarantee the order of keys in command
             coll = self._src_mc['local'].get_collection('oplog.rs', codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
-            cursor = coll.find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+            cursor = coll.find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT, no_cursor_timeout=True)
+
+            # New in version 3.2
+            if tuple(self._src_version.split('.')) >= tuple('3.2.0'.split('.')):
+                cursor.max_await_time_ms(3000)
+
             if cursor.next()['ts'] != oplog_start:
                 self._logger.error('%s is stale, terminate' % oplog_start)
                 return
@@ -579,7 +587,12 @@ class MongoSynchronizer(object):
                         w=self._w)
                 # set codec options  to guarantee the order of keys in command
                 coll = self._src_mc['local'].get_collection('oplog.rs', codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
-                cursor = coll.find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE, no_cursor_timeout=True)
+                cursor = coll.find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT, no_cursor_timeout=True)
+
+                # New in version 3.2
+                if tuple(self._src_version.split('.')) >= tuple('3.2.0'.split('.')):
+                    cursor.max_await_time_ms(3000)
+
                 if cursor.next()['ts'] != self._last_optime:
                     self._logger.error('%s is stale, terminate' % self._last_optime)
                     return

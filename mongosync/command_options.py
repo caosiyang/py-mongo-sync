@@ -1,16 +1,21 @@
 import sys
 import argparse
+from mongo_helper import parse_hostportstr
 
 class CommandOptions(object):
     """ Command options.
     """
     def __init__(self):
         self.src_hostportstr = ''
+        self.src_host = ''
+        self.src_port = 0
         self.src_engine = 'mongodb'
         self.src_authdb = 'admin'
         self.src_username = ''
         self.src_password = ''
         self.dst_hostportstr = ''
+        self.dst_host = ''
+        self.dst_port = 0
         self.dst_authdb = 'admin'
         self.dst_username = ''
         self.dst_password = ''
@@ -45,6 +50,7 @@ class CommandOptions(object):
 
         if args['from'] != None:
             self.src_hostportstr = args['from']
+            self.src_host, self.src_port = parse_hostportstr(self.src_hostportstr)
 
         if args['src_engine'] != None:
             if args['src_engine'] not in ['mongodb', 'tokumx']:
@@ -63,6 +69,7 @@ class CommandOptions(object):
 
         if args['to'] != None:
             self.dst_hostportstr = args['to']
+            self.dst_host, self.dst_port = parse_hostportstr(self.dst_hostportstr)
 
         if args['dst_authdb'] != None:
             self.dst_authdb = args['dst_authdb']
@@ -150,6 +157,7 @@ class CheckCommandOptions(object):
         args = vars(parser.parse_args())
         if args['from'] != None:
             self.src_hostportstr = args['from']
+            self.src_host, self.src_port = parse_hostportstr(self.src_hostportstr)
         if args['src_authdb'] != None:
             self.src_authdb = args['src_authdb']
         if args['src_username'] != None:
@@ -158,6 +166,7 @@ class CheckCommandOptions(object):
             self.src_password = args['src_password']
         if args['to'] != None:
             self.dst_hostportstr = args['to']
+            self.dst_host, self.dst_port = parse_hostportstr(self.dst_hostportstr)
         if args['dst_authdb'] != None:
             self.dst_authdb = args['dst_authdb']
         if args['dst_username'] != None:

@@ -9,6 +9,7 @@ import pymongo
 from mongosync.mongo_synchronizer import MongoSynchronizer
 from mongosync.command_options import CommandOptions
 from mongosync.logger import Logger
+from mongosync.mongo_helper import get_version
 
 if __name__ == '__main__':
     opts = CommandOptions()
@@ -20,6 +21,7 @@ if __name__ == '__main__':
     logger.info('================================================')
     logger.info('src hostportstr :  %s' % opts.src_hostportstr)
     logger.info('src engine      :  %s' % opts.src_engine)
+    logger.info('src db version  :  %s' % get_version(opts.src_host, opts.src_port))
     if opts.src_username or opts.src_password:
         logger.info('src authdb      :  %s' % opts.src_authdb)
     else:
@@ -27,6 +29,7 @@ if __name__ == '__main__':
     logger.info('src username    :  %s' % opts.src_username)
     logger.info('src password    :  %s' % opts.src_password)
     logger.info('dst hostportstr :  %s' % opts.dst_hostportstr)
+    logger.info('dst db version  :  %s' % get_version(opts.dst_host, opts.dst_port))
     if opts.dst_username or opts.dst_password:
         logger.info('dst authdb      :  %s' % opts.dst_authdb)
     else:

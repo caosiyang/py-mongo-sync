@@ -30,6 +30,12 @@ def mongo_connect(host, port, **kwargs):
         mc[authdb].authenticate(username, password)
     return mc
 
+def get_version(host, port):
+    """ Get MonogDB server version.
+    """
+    with pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000) as mc:
+        return mc.server_info()['version']
+
 def get_replica_set_name(host, port, **kwargs):
     """ Get replica set name.
     Return a empty string if it's not a replica set. 
@@ -123,4 +129,19 @@ def parse_namespace(ns):
     """
     res = ns.split('.', 1)
     return res[0], res[1]
+
+def parse_hostportstr(hostportstr):
+    """ Parse hostportstr like 'xxx.xxx.xxx.xxx:xxx'
+    """
+    host = hostportstr.split(':')[0]
+    port = int(hostportstr.split(':')[1])
+    return host, port
+
+def collect_server_info(host, port):
+    """ Collect general information of server.
+    """
+    info = {}
+    with pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000) as mc:
+        info['version'] = mc.server_info()['version']
+        return info
 
