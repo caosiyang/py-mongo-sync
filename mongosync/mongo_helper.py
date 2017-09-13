@@ -145,3 +145,10 @@ def collect_server_info(host, port):
         info['version'] = mc.server_info()['version']
         return info
 
+def version_higher_or_equal(v1, v2):
+    """ Check if v1 is higher than or equal to v2.
+    """
+    t1 = tuple(int(val) for val in v1.split('.'))
+    t2 = tuple(int(val) for val in v2.split('.'))
+    return t1 >= t2
+

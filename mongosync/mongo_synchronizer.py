@@ -476,7 +476,7 @@ class MongoSynchronizer(object):
             cursor = coll.find({'ts': {'$gte': oplog_start}}, cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT, no_cursor_timeout=True)
 
             # New in version 3.2
-            if tuple(self._src_version.split('.')) >= tuple('3.2.0'.split('.')):
+            if mongo_helper.version_higher_or_equal(self._src_version, '3.2.0'):
                 cursor.max_await_time_ms(3000)
 
             if cursor.next()['ts'] != oplog_start:
@@ -590,7 +590,7 @@ class MongoSynchronizer(object):
                 cursor = coll.find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT, no_cursor_timeout=True)
 
                 # New in version 3.2
-                if tuple(self._src_version.split('.')) >= tuple('3.2.0'.split('.')):
+                if mongo_helper.version_higher_or_equal(self._src_version, '3.2.0'):
                     cursor.max_await_time_ms(3000)
 
                 if cursor.next()['ts'] != self._last_optime:
