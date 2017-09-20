@@ -523,16 +523,16 @@ class MongoSynchronizer(object):
                         if recovered:
                             self._logger.info('recovered at %s' % oplog['ts'])
                             recovered = False
+                        if n_total % 1000 == 0:
+                            self._print_progress(oplog)
                         self._replay_oplog(oplog)
                         n_replayed += 1
-                        if n_replayed % 1000 == 0:
-                            self._print_progress(oplog)
                         break
                     except pymongo.errors.DuplicateKeyError as e:
                         # TODO
                         # through unique index, delete old, insert new
                         #self._logger.error(oplog)
-                        #self._logger.error(e)
+                        self._logger.error(e)
                         break
                     except pymongo.errors.AutoReconnect as e:
                         self._logger.error(e)
@@ -620,7 +620,10 @@ class MongoSynchronizer(object):
         else:
             now = time.time()
             if now - self._last_logtime > self._log_interval:
-                self._logger.info('%s, no more oplog, sync to %s, %s' % (self.from_to, datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime))
+                if self._src_engine == 'mongodb':
+                    self._logger.info('%s, sync to %s, %s - latest' % (self.from_to, datetime.datetime.fromtimestamp(self._last_optime.time), self._last_optime))
+                elif self._src_engine == 'tokumx':
+                    self._logger.info('%s, sync to %s - latest' % (self.from_to, self._last_optime))
                 self._set_last_logtime()
 
     def _replay_oplog_mongodb(self, oplog):
