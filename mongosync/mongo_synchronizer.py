@@ -219,7 +219,13 @@ class MongoSynchronizer(object):
                                                              cursor_type=pymongo.cursor.CursorType.EXHAUST,
                                                              no_cursor_timeout=True,
                                                              modifiers={'$snapshot': True})
-                count = cursor.count()
+
+                if self._src_engine == 'tokumx':
+                    # TokuMX 'count' command may be very slow, use 'collStats' command instead
+                    count = self._src_mc[src_dbname].command({'collStats': src_collname})['count']
+                else:
+                    count = cursor.count()
+
                 if count == 0:
                     self._logger.info('[%s] \t skip empty collection' % (self._current_process_name))
                     return
