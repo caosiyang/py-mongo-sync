@@ -26,7 +26,6 @@ class MongoSynchronizer(object):
 
         self._src_mc = None
         self._dst_mc = None
-        self._filter = None
         self._w = 1 # write concern, default 1
         self._start_optime = None # if true, only sync oplog
         self._last_optime = None # optime of the last oplog has been replayed
@@ -56,6 +55,7 @@ class MongoSynchronizer(object):
             assert len(self._dbs) == 0
             self._dbs.append(self._src_db)
 
+        self._filter = None
         if self._colls:
             self._filter = filter.CollectionFilter()
             self._filter.add_target_collections(self._colls)
@@ -64,8 +64,7 @@ class MongoSynchronizer(object):
             self._filter.add_target_databases(self._dbs)
 
         # init src mongo client
-        self._src_host = src_hostportstr.split(':')[0]
-        self._src_port = int(src_hostportstr.split(':')[1])
+        self._src_host, self._src_port = mongo_helper.parse_hostportstr(src_hostportstr)
         self._src_mc = mongo_helper.mongo_connect(
                 self._src_host,
                 self._src_port,
@@ -75,8 +74,7 @@ class MongoSynchronizer(object):
                 w=self._w)
 
         # init dst mongo client
-        self._dst_host = dst_hostportstr.split(':')[0]
-        self._dst_port = int(dst_hostportstr.split(':')[1])
+        self._dst_host, self._dst_port = mongo_helper.parse_hostportstr(dst_hostportstr)
         self._dst_mc = mongo_helper.mongo_connect(
                 self._dst_host,
                 self._dst_port,

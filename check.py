@@ -1,8 +1,8 @@
 import sys
 import argparse
 import pymongo
-from mongosync import mongo_helper
 from mongosync import filter
+from mongosync import mongo_helper
 from mongosync.command_options import CheckCommandOptions
 
 def get_standard_index_name(index_items):
@@ -21,52 +21,51 @@ def get_standard_index_name(index_items):
     return '_'.join(index_keys)
 
 if __name__ == '__main__':
-    opts = CheckCommandOptions()
-    opts.parse()
+    conf = CheckCommandOptions.parse()
 
     print '=' * 48
-    print 'src           :  %s' % opts.src_hostportstr
-    print 'src authdb    :  %s' % opts.src_authdb
-    print 'src username  :  %s' % opts.src_username
-    print 'src password  :  %s' % opts.src_password
-    print 'dst           :  %s' % opts.dst_hostportstr
-    print 'dst authdb    :  %s' % opts.dst_authdb
-    print 'dst username  :  %s' % opts.dst_username
-    print 'dst password  :  %s' % opts.dst_password
+    print 'src           :  %s' % conf.src_hostportstr
+    print 'src authdb    :  %s' % conf.src_authdb
+    print 'src username  :  %s' % conf.src_username
+    print 'src password  :  %s' % conf.src_password
+    print 'dst           :  %s' % conf.dst_hostportstr
+    print 'dst authdb    :  %s' % conf.dst_authdb
+    print 'dst username  :  %s' % conf.dst_username
+    print 'dst password  :  %s' % conf.dst_password
     print '-' * 48
-    print 'dbs           :  %s' % opts.dbs
-    print 'src db        :  %s' % opts.src_db
-    print 'dst db        :  %s' % opts.dst_db
+    print 'dbs           :  %s' % conf.dbs
+    print 'src db        :  %s' % conf.src_db
+    print 'dst db        :  %s' % conf.dst_db
     print '=' * 48
 
     rename_db_mode = False
-    if opts.src_db and opts.dst_db:
-        assert opts.dbs == []
-        opts.dbs.append(opts.src_db)
+    if conf.src_db and conf.dst_db:
+        assert conf.dbs == []
+        conf.dbs.append(conf.src_db)
         rename_db_mode = True
 
     db_filter = None
-    if opts.dbs:
+    if conf.dbs:
         db_filter = filter.DatabaseFilter()
-        db_filter.add_target_databases(opts.dbs)
+        db_filter.add_target_databases(conf.dbs)
 
-    src_host = opts.src_hostportstr.split(':')[0]
-    src_port = int(opts.src_hostportstr.split(':')[1])
+    src_host = conf.src_hostportstr.split(':')[0]
+    src_port = int(conf.src_hostportstr.split(':')[1])
     src_mc = mongo_helper.mongo_connect(
             src_host,
             src_port,
-            authdb=opts.src_authdb,
-            username=opts.src_username,
-            password=opts.src_password)
+            authdb=conf.src_authdb,
+            username=conf.src_username,
+            password=conf.src_password)
 
-    dst_host = opts.dst_hostportstr.split(':')[0]
-    dst_port = int(opts.dst_hostportstr.split(':')[1])
+    dst_host = conf.dst_hostportstr.split(':')[0]
+    dst_port = int(conf.dst_hostportstr.split(':')[1])
     dst_mc = mongo_helper.mongo_connect(
             dst_host,
             dst_port,
-            authdb=opts.dst_authdb,
-            username=opts.dst_username,
-            password=opts.dst_password)
+            authdb=conf.dst_authdb,
+            username=conf.dst_username,
+            password=conf.dst_password)
 
     ignore_dbs = ['admin', 'local']
     ignore_colls = ['system.users', 'system.profile']
@@ -91,8 +90,8 @@ if __name__ == '__main__':
             if collname in ignore_colls:
                 continue
             if rename_db_mode:
-                assert dbname == opts.src_db
-                ddb = opts.dst_db
+                assert dbname == conf.src_db
+                ddb = conf.dst_db
             else:
                 ddb = dbname
             src_coll_cnt = src_mc[dbname][collname].count()
@@ -119,8 +118,8 @@ if __name__ == '__main__':
             if collname in ignore_colls:
                 continue
             if rename_db_mode:
-                assert dbname == opts.src_db
-                ddb = opts.dst_db
+                assert dbname == conf.src_db
+                ddb = conf.dst_db
             else:
                 ddb = dbname
             src_index_info = src_mc[dbname][collname].index_information()

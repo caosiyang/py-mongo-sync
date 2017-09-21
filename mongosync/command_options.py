@@ -1,34 +1,17 @@
 import sys
 import argparse
+from config import Config
 from mongo_helper import parse_hostportstr
 
 class CommandOptions(object):
     """ Command options.
     """
-    def __init__(self):
-        self.src_hostportstr = ''
-        self.src_host = ''
-        self.src_port = 0
-        self.src_engine = 'mongodb'
-        self.src_authdb = 'admin'
-        self.src_username = ''
-        self.src_password = ''
-        self.dst_hostportstr = ''
-        self.dst_host = ''
-        self.dst_port = 0
-        self.dst_authdb = 'admin'
-        self.dst_username = ''
-        self.dst_password = ''
-        self.dbs = []
-        self.colls = []
-        self.src_db = ''
-        self.dst_db = ''
-        self.start_optime = ''
-        self.logfilepath = ''
-
-    def parse(self):
-        """ Parse command options.
+    @staticmethod
+    def parse():
+        """ Parse command options and generate config.
         """
+        conf = Config()
+
         parser = argparse.ArgumentParser(description='Sync data from a replica-set to another mongod/replica-set/sharded-cluster.')
         parser.add_argument('--from', nargs='?', required=True, help='source must be a member of replica-set')
         parser.add_argument('--src-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
@@ -49,98 +32,70 @@ class CommandOptions(object):
         args = vars(parser.parse_args())
 
         if args['from'] != None:
-            self.src_hostportstr = args['from']
-            self.src_host, self.src_port = parse_hostportstr(self.src_hostportstr)
-
+            conf.src_hostportstr = args['from']
+            conf.src_host, conf.src_port = parse_hostportstr(conf.src_hostportstr)
         if args['src_engine'] != None:
             if args['src_engine'] not in ['mongodb', 'tokumx']:
                 print 'invalid src_engine, terminate'
                 sys.exit(1)
-            self.src_engine = args['src_engine']
-
+            conf.src_engine = args['src_engine']
         if args['src_authdb'] != None:
-            self.src_authdb = args['src_authdb']
-
+            conf.src_authdb = args['src_authdb']
         if args['src_username'] != None:
-            self.src_username = args['src_username']
-
+            conf.src_username = args['src_username']
         if args['src_password'] != None:
-            self.src_password = args['src_password']
-
+            conf.src_password = args['src_password']
         if args['to'] != None:
-            self.dst_hostportstr = args['to']
-            self.dst_host, self.dst_port = parse_hostportstr(self.dst_hostportstr)
-
+            conf.dst_hostportstr = args['to']
+            conf.dst_host, conf.dst_port = parse_hostportstr(conf.dst_hostportstr)
         if args['dst_authdb'] != None:
-            self.dst_authdb = args['dst_authdb']
-
+            conf.dst_authdb = args['dst_authdb']
         if args['dst_username'] != None:
-            self.dst_username = args['dst_username']
-
+            conf.dst_username = args['dst_username']
         if args['dst_password'] != None:
-            self.dst_password = args['dst_password']
-
+            conf.dst_password = args['dst_password']
         if args['dbs'] != None:
-            self.dbs = args['dbs']
-
+            conf.dbs = args['dbs']
         if args['colls'] != None:
-            self.colls = args['colls']
-
+            conf.colls = args['colls']
         if args['src_db'] != None:
-            self.src_db = args['src_db']
-
+            conf.src_db = args['src_db']
         if args['dst_db'] != None:
-            self.dst_db = args['dst_db']
-
+            conf.dst_db = args['dst_db']
         if args['start_optime'] != None:
-            self.start_optime = args['start_optime']
-
+            conf.start_optime = args['start_optime']
         if args['log'] != None:
-            self.logfilepath = args['log']
+            conf.logfilepath = args['log']
 
         conflict = False
-        conflict = conflict or (self.dbs and (self.colls or self.src_db or self.dst_db))
-        conflict = conflict or (self.colls and (self.dbs or self.src_db or self.dst_db))
-        conflict = conflict or (self.src_db and (self.dbs or self.colls))
-        conflict = conflict or (self.dst_db and (self.dbs or self.colls))
+        conflict = conflict or (conf.dbs and (conf.colls or conf.src_db or conf.dst_db))
+        conflict = conflict or (conf.colls and (conf.dbs or conf.src_db or conf.dst_db))
+        conflict = conflict or (conf.src_db and (conf.dbs or conf.colls))
+        conflict = conflict or (conf.dst_db and (conf.dbs or conf.colls))
         if conflict:
             print "Terminated, conflict command options found"
             sys.exit(1)
-
-        if self.src_db and not self.dst_db:
+        if conf.src_db and not conf.dst_db:
             print "Terminated, require command option '--dst-db'"
             sys.exit(1)
-
-        if self.dst_db and not self.src_db:
+        if conf.dst_db and not conf.src_db:
             print "Terminated, require command option '--src-db'"
             sys.exit(1)
-
-        if self.src_db and self.dst_db and self.src_db == self.dst_db:
+        if conf.src_db and conf.dst_db and conf.src_db == conf.dst_db:
             print 'Terminated, src_db is same as dst_db'
             sys.exit(1)
 
-        return True
-
+        return conf
 
 class CheckCommandOptions(object):
     """ Check command options.
     """
-    def __init__(self):
-        self.src_hostportstr = ''
-        self.src_authdb = 'admin'
-        self.src_username = ''
-        self.src_password = ''
-        self.dst_hostportstr = ''
-        self.dst_authdb = 'admin'
-        self.dst_username = ''
-        self.dst_password = ''
-        self.dbs = []
-        self.src_db = ''
-        self.dst_db = ''
-
-    def parse(self):
-        """ Parse command options.
+    @staticmethod
+    def parse():
+        """ Parse command options and generate config.
         """
+        conf = Config()
+
         parser = argparse.ArgumentParser(description='Check data consistency including data and indexes.')
         parser.add_argument('--from', nargs='?', required=True, help='the source must be a mongod instance of replica-set')
         parser.add_argument('--src-authdb', nargs='?', required=False, help="authentication database, default is 'admin'")
@@ -156,42 +111,42 @@ class CheckCommandOptions(object):
 
         args = vars(parser.parse_args())
         if args['from'] != None:
-            self.src_hostportstr = args['from']
-            self.src_host, self.src_port = parse_hostportstr(self.src_hostportstr)
+            conf.src_hostportstr = args['from']
+            conf.src_host, conf.src_port = parse_hostportstr(conf.src_hostportstr)
         if args['src_authdb'] != None:
-            self.src_authdb = args['src_authdb']
+            conf.src_authdb = args['src_authdb']
         if args['src_username'] != None:
-            self.src_username = args['src_username']
+            conf.src_username = args['src_username']
         if args['src_password'] != None:
-            self.src_password = args['src_password']
+            conf.src_password = args['src_password']
         if args['to'] != None:
-            self.dst_hostportstr = args['to']
-            self.dst_host, self.dst_port = parse_hostportstr(self.dst_hostportstr)
+            conf.dst_hostportstr = args['to']
+            conf.dst_host, conf.dst_port = parse_hostportstr(conf.dst_hostportstr)
         if args['dst_authdb'] != None:
-            self.dst_authdb = args['dst_authdb']
+            conf.dst_authdb = args['dst_authdb']
         if args['dst_username'] != None:
-            self.dst_username = args['dst_username']
+            conf.dst_username = args['dst_username']
         if args['dst_password'] != None:
-            self.dst_password = args['dst_password']
+            conf.dst_password = args['dst_password']
         if args['dbs'] != None:
-            self.dbs = args['dbs']
+            conf.dbs = args['dbs']
         if args['src_db'] != None:
-            self.src_db = args['src_db']
+            conf.src_db = args['src_db']
         if args['dst_db'] != None:
-            self.dst_db = args['dst_db']
+            conf.dst_db = args['dst_db']
 
-        if self.dbs and (self.src_db or self.dst_db):
+        if conf.dbs and (conf.src_db or conf.dst_db):
             print "Terminated, conflict command options found"
             sys.exit(1)
-        if self.src_db and not self.dst_db:
+        if conf.src_db and not conf.dst_db:
             print "Terminated, require command option '--dst-db'"
             sys.exit(1)
-        if self.dst_db and not self.src_db:
+        if conf.dst_db and not conf.src_db:
             print "Terminated, require command option '--src-db'"
             sys.exit(1)
-        if self.src_db and self.dst_db and self.src_db == self.dst_db:
+        if conf.src_db and conf.dst_db and conf.src_db == conf.dst_db:
             print 'Terminated, src_db is same as dst_db'
             sys.exit(1)
 
-        return True
+        return conf
 
