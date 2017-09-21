@@ -13,7 +13,7 @@ def mongo_connect(host, port, **kwargs):
     authdb = kwargs.get('authdb', 'admin') # default auth db is 'admin'
     username = kwargs.get('username', '')
     password = kwargs.get('password', '')
-    w = kwargs.get('w', 1) # default w = 1
+    w = kwargs.get('w', 1)
     replset_name = get_replica_set_name(host, port, **kwargs)
     if replset_name:
         mc = pymongo.MongoClient(

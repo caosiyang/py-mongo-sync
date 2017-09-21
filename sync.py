@@ -5,11 +5,9 @@
 # author: caosiyang
 # date: 2013/09/16
 
-import pymongo
-from mongosync.mongo_synchronizer import MongoSynchronizer
 from mongosync.command_options import CommandOptions
 from mongosync.logger import Logger
-from mongosync.mongo_helper import get_version
+from mongosync.mongo_synchronizer import MongoSynchronizer
 
 if __name__ == '__main__':
     conf = CommandOptions.parse()
@@ -22,10 +20,10 @@ if __name__ == '__main__':
     syncer = MongoSynchronizer(
             conf.src_hostportstr,
             conf.dst_hostportstr,
+            src_engine=conf.src_engine,
             src_authdb=conf.src_authdb,
             src_username=conf.src_username,
             src_password=conf.src_password,
-            src_engine=conf.src_engine,
             dst_authdb=conf.dst_authdb,
             dst_username=conf.dst_username,
             dst_password=conf.dst_password,
