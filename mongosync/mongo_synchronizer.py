@@ -7,6 +7,10 @@ import bson
 import mongo_helper
 import filter
 from logger import Logger
+try:
+    import gevent
+except ImportError:
+    pass
 
 class MongoSynchronizer(object):
     """ MongoDB synchronizer.
@@ -35,8 +39,9 @@ class MongoSynchronizer(object):
         self._colls = kwargs.get('colls', [])
         self._src_db = kwargs.get('src_db', '')
         self._dst_db = kwargs.get('dst_db', '')
-        self._ignore_indexes = kwargs.get('ignore_indexes')
+        self._ignore_indexes = kwargs.get('ignore_indexes', False)
         self._start_optime = kwargs.get('start_optime')
+        self._asyncio = kwargs.get('asyncio', False)
 
         self._logger = Logger.get()
         self._src_version = mongo_helper.get_version(self._src_host, self._src_port)
@@ -186,10 +191,6 @@ class MongoSynchronizer(object):
         self._logger.info("sync collection '%s.%s'" % (src_dbname, src_collname))
         while True:
             try:
-                n = 0
-                #docs = [] 
-                reqs = []
-                batchsize = 1000
                 cursor = self._src_mc[src_dbname][src_collname].find(filter=None,
                                                              cursor_type=pymongo.cursor.CursorType.EXHAUST,
                                                              no_cursor_timeout=True,
@@ -204,31 +205,50 @@ class MongoSynchronizer(object):
                 if count == 0:
                     self._logger.info('\t skip empty collection')
                     return
+
+                n = 0
+                reqs = []
+                reqs_max = 100
+                groups = []
+                groups_max = 10
+
                 for doc in cursor:
-                    #docs.append(doc)
-                    #if len(docs) == batchsize:
-                    #    self._dst_mc[dst_dbname][dst_collname].insert_many(docs)
-                    #    docs = []
-                    reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
-                    if len(reqs) == batchsize:
-                        self._bulk_write(dst_dbname, dst_collname, reqs, ordered=False)
-                        reqs = []
+                    if self._asyncio:
+                        reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
+                        if len(reqs) == reqs_max:
+                            groups.append(reqs)
+                            reqs = []
+                        if len(groups) == groups_max:
+                            threads = [gevent.spawn(self._bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
+                            gevent.joinall(threads)
+                            groups = []
+                    else:
+                        reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
+                        if len(reqs) == reqs_max:
+                            self._bulk_write(dst_dbname, dst_collname, reqs)
+                            reqs = []
                     n += 1
                     if n % 10000 == 0:
                         self._logger.info('\t %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
-                #if len(docs) > 0:
-                #    self._dst_mc[dst_dbname][dst_collname].insert_many(docs)
-                if len(reqs) > 0:
-                    self._bulk_write(dst_dbname, dst_collname, reqs, ordered=False)
-                    self._logger.info('\t %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
+
+                if self._asyncio:
+                    if len(groups) > 0:
+                        threads = [gevent.spawn(self._bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
+                        gevent.joinall(threads)
+                    if len(reqs) > 0:
+                        self._bulk_write(dst_dbname, dst_collname, reqs)
+                else:
+                    if len(reqs) > 0:
+                        self._bulk_write(dst_dbname, dst_collname, reqs)
+
+                self._logger.info('\t %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
                 return
             except pymongo.errors.AutoReconnect:
                 self._src_mc.close()
                 self._src_mc = self.reconnect(self._src_host,
                                               self._src_port,
                                               username=self._src_username,
-                                              password=self._src_password,
-                                              w=self._w)
+                                              password=self._src_password)
 
     def _sync_indexes(self, dbname):
         """ Create indexes.
@@ -345,8 +365,7 @@ class MongoSynchronizer(object):
                                 self._dst_host,
                                 self._dst_port,
                                 username=self._dst_username,
-                                password=self._dst_password,
-                                w=self._w)
+                                password=self._dst_password)
                         if self._dst_mc:
                             recovered = True
                     except pymongo.errors.WriteError as e:
@@ -393,8 +412,7 @@ class MongoSynchronizer(object):
                         host,
                         port,
                         username=self._src_username,
-                        password=self._src_password,
-                        w=self._w)
+                        password=self._src_password)
                 # set codec options  to guarantee the order of keys in command
                 coll = self._src_mc['local'].get_collection('oplog.rs', codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
                 cursor = coll.find({'ts': {'$gte': self._last_optime}}, cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT, no_cursor_timeout=True)
@@ -548,8 +566,7 @@ class MongoSynchronizer(object):
                 self._dst_mc = self.reconnect(self._dst_host,
                         self._dst_port,
                         username=self._dst_username,
-                        password=self._dst_password,
-                        w=self._w)
+                        password=self._dst_password)
             except pymongo.errors.BulkWriteError as e:
                 self._handle_bulk_write_error(dbname, collname, requests)
                 return
@@ -567,8 +584,7 @@ class MongoSynchronizer(object):
                     self._dst_mc = self.reconnect(self._dst_host,
                             self._dst_port,
                             username=self._dst_username,
-                            password=self._dst_password,
-                            w=self._w)
+                            password=self._dst_password)
                 except Exception as e:
                     self._logger.error('%s when excuting %s' % (e, op))
                     break

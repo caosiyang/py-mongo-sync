@@ -5,6 +5,12 @@
 # author: caosiyang
 # date: 2013/09/16
 
+try:
+    from gevent import monkey
+    monkey.patch_all()
+    gevent_support = True
+except ImportError as e:
+    gevent_support = False
 from mongosync.command_options import CommandOptions
 from mongosync.logger import Logger
 from mongosync.mongo_synchronizer import MongoSynchronizer
@@ -15,8 +21,9 @@ if __name__ == '__main__':
     Logger.init(conf.logfilepath)
     logger = Logger.get()
 
+    conf.asyncio = gevent_support
     conf.info(logger)
- 
+
     syncer = MongoSynchronizer(
             conf.src_hostportstr,
             conf.dst_hostportstr,
@@ -32,7 +39,8 @@ if __name__ == '__main__':
             src_db=conf.src_db,
             dst_db=conf.dst_db,
             ignore_indexes=False,
-            start_optime=conf.start_optime)
+            start_optime=conf.start_optime,
+            asyncio = conf.asyncio)
     syncer.run()
     logger.info('exit')
 

@@ -24,7 +24,7 @@ class Config(object):
         self.dst_db = ''
         self.start_optime = ''
         self.logfilepath = ''
-        self.gevent_support = False
+        self.asyncio = False
 
     def info(self, logger=None):
         """ Output to logfile or stdout.
@@ -48,6 +48,7 @@ class Config(object):
             logger.info('dst db          :  %s' % self.dst_db)
             logger.info('start optime    :  %s' % self.start_optime)
             logger.info('log filepath    :  %s' % self.logfilepath)
+            logger.info('asyncio         :  %s' % self.asyncio)
             logger.info('pymongo version :  %s' % pymongo.version)
             logger.info('================================================')
         else:
@@ -69,6 +70,7 @@ class Config(object):
             print 'dst db          :  %s' % self.dst_db
             print 'start optime    :  %s' % self.start_optime
             print 'log filepath    :  %s' % self.logfilepath
+            print 'asyncio         :  %s' % self.asyncio
             print 'pymongo version :  %s' % pymongo.version
             print '================================================'
 
