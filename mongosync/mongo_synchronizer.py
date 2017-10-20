@@ -188,9 +188,9 @@ class MongoSynchronizer(object):
     def _sync_collection(self, src_dbname, src_collname, dst_dbname, dst_collname):
         """ Sync a collection through batch write.
         """
-        self._logger.info("sync collection '%s.%s'" % (src_dbname, src_collname))
         while True:
             try:
+                self._logger.info("sync collection '%s.%s'" % (src_dbname, src_collname))
                 cursor = self._src_mc[src_dbname][src_collname].find(filter=None,
                                                              cursor_type=pymongo.cursor.CursorType.EXHAUST,
                                                              no_cursor_timeout=True,

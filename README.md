@@ -2,7 +2,6 @@
 
 An oplog-based realtime sync tool for MongoDB written in Python.
 
-
 ## Features
 
 - full sync including data and indexes
@@ -10,7 +9,6 @@ An oplog-based realtime sync tool for MongoDB written in Python.
 - sync the specified databases
 - sync the specified collections
 - support MongoDB(v2.4 or later) and TokuMX
-
 
 ## Notes
 
@@ -25,15 +23,14 @@ An oplog-based realtime sync tool for MongoDB written in Python.
 - run as superuser through setting '--src-username' and '--src-password' if source authentication is enabled
 - you could sync a sharded-cluster by running a process for each shard, first of all, guarantee that balancer is off
 
-
 ## Not Supported
 
 - geospatial index
 
-
 ## Dependency
 
 - pymongo 3.0 or later
+- gevent (for async IO and better performance, optional)
 
 ## Usage 
 
