@@ -1,30 +1,76 @@
 import pymongo
-from mongosync.mongo_helper import get_version
+from mongosync.mongo_utils import get_version
+from mongosync.data_filter import DataFilter
+
+
+class MongoConfig(object):
+    def __init__(self, hosts, authdb='', username='', password=''):
+        self.hosts = hosts
+        self.authdb = authdb
+        self.username = username
+        self.password = password
+
+
+class EsConfig(object):
+    def __init__(self, hosts):
+        self.hosts = hosts
+
 
 class Config(object):
     """ Configuration.
     """
     def __init__(self):
-        self.src_hostportstr = ''
-        self.src_host = ''
-        self.src_port = 0
-        self.src_engine = 'mongodb'
-        self.src_authdb = 'admin'
-        self.src_username = ''
-        self.src_password = ''
-        self.dst_hostportstr = ''
-        self.dst_host = ''
-        self.dst_port = 0
-        self.dst_authdb = 'admin'
-        self.dst_username = ''
-        self.dst_password = ''
-        self.dbs = []
-        self.colls = []
-        self.src_db = ''
-        self.dst_db = ''
-        self.start_optime = ''
+        self.src_conf = None
+        self.dst_conf = None
+
+        self.data_filter = DataFilter()
+
+        # rename mapping
+        self.dbmap = {}
+
+        # fields {'ns' : frozenset(['field0', 'field1'])}
+        self.fieldmap = {}
+
+        self.start_optime = None
         self.logfilepath = ''
-        self.asyncio = False
+
+        try:
+            import gevent
+            self.asyncio = True
+        except ImportError:
+            self.asyncio = False
+
+    @property
+    def src_hostportstr(self):
+        return self.hostportstr(self.src_conf.hosts)
+
+    @property
+    def dst_hostportstr(self):
+        return self.hostportstr(self.dst_conf.hosts)
+
+    @property
+    def dbmap_str(self):
+        return ', '.join(['%s => %s' % (k, v) for k, v in self.dbmap.iteritems()])
+
+    @property
+    def fieldmap_str(self):
+        return ', '.join(['%s {%s}' % (k, ', '.join(v)) for k, v in self.fieldmap.iteritems()])
+
+    def db_mapping(self, dbname):
+        mapping_dbname = self.dbmap.get(dbname.strip())
+        return mapping_dbname if mapping_dbname else dbname
+
+    def db_coll_mapping(self, dbname, collname):
+        return self.db_mapping(dbname.strip()), collname.strip()
+
+    def ns_mapping(self, dbname, collname):
+        return '%s.%s' % (self.db_mapping(dbname.strip()), collname.strip())
+
+    def hostportstr(self, hosts):
+        if isinstance(hosts, str) or isinstance(hosts, unicode):
+            return hosts
+        elif isinstance(hosts, list):
+            return ', '.join(hosts)
 
     def info(self, logger=None):
         """ Output to logfile or stdout.
@@ -32,20 +78,25 @@ class Config(object):
         if logger:
             logger.info('================================================')
             logger.info('src hostportstr :  %s' % self.src_hostportstr)
-            logger.info('src engine      :  %s' % self.src_engine)
-            logger.info('src db version  :  %s' % get_version(self.src_host, self.src_port))
-            logger.info('src authdb      :  %s' % self.src_authdb)
-            logger.info('src username    :  %s' % self.src_username)
-            logger.info('src password    :  %s' % self.src_password)
+            logger.info('src authdb      :  %s' % self.src_conf.authdb)
+            logger.info('src username    :  %s' % self.src_conf.username)
+            logger.info('src password    :  %s' % self.src_conf.password)
+            if isinstance(self.src_conf.hosts, str) or isinstance(self.src_conf.hosts, unicode):
+                logger.info('src db version  :  %s' % get_version(self.src_conf.hosts))
+
             logger.info('dst hostportstr :  %s' % self.dst_hostportstr)
-            logger.info('dst db version  :  %s' % get_version(self.dst_host, self.dst_port))
-            logger.info('dst authdb      :  %s' % self.dst_authdb)
-            logger.info('dst username    :  %s' % self.dst_username)
-            logger.info('dst password    :  %s' % self.dst_password)
-            logger.info('databases       :  %s' % self.dbs)
-            logger.info('collections     :  %s' % self.colls)
-            logger.info('src db          :  %s' % self.src_db)
-            logger.info('dst db          :  %s' % self.dst_db)
+            if isinstance(self.dst_conf, MongoConfig):
+                if isinstance(self.dst_conf.hosts, str) or isinstance(self.dst_conf.hosts, unicode):
+                    logger.info('dst authdb      :  %s' % self.dst_conf.authdb)
+                    logger.info('dst username    :  %s' % self.dst_conf.username)
+                    logger.info('dst password    :  %s' % self.dst_conf.password)
+                    logger.info('dst db version  :  %s' % get_version(self.dst_conf.hosts))
+
+            logger.info('databases       :  %s' % ', '.join(self.data_filter._related_dbs))
+            logger.info('collections     :  %s' % ', '.join(self.data_filter._include_colls))
+            logger.info('db mapping      :  %s' % self.dbmap_str)
+            logger.info('fileds          :  %s' % self.fieldmap_str)
+
             logger.info('start optime    :  %s' % self.start_optime)
             logger.info('log filepath    :  %s' % self.logfilepath)
             logger.info('asyncio         :  %s' % self.asyncio)
@@ -54,23 +105,27 @@ class Config(object):
         else:
             print '================================================'
             print 'src hostportstr :  %s' % self.src_hostportstr
-            print 'src engine      :  %s' % self.src_engine
-            print 'src db version  :  %s' % get_version(self.src_host, self.src_port)
-            print 'src authdb      :  %s' % self.src_authdb
-            print 'src username    :  %s' % self.src_username
-            print 'src password    :  %s' % self.src_password
+            print 'src authdb      :  %s' % self.src_conf.authdb
+            print 'src username    :  %s' % self.src_conf.username
+            print 'src password    :  %s' % self.src_conf.password
+            if isinstance(self.dst_conf.hosts, unicode):
+                print 'src db version  :  %s' % get_version(self.src_conf.hosts)
+
             print 'dst hostportstr :  %s' % self.dst_hostportstr
-            print 'dst db version  :  %s' % get_version(self.dst_host, self.dst_port)
-            print 'dst authdb      :  %s' % self.dst_authdb
-            print 'dst username    :  %s' % self.dst_username
-            print 'dst password    :  %s' % self.dst_password
-            print 'databases       :  %s' % self.dbs
-            print 'collections     :  %s' % self.colls
-            print 'src db          :  %s' % self.src_db
-            print 'dst db          :  %s' % self.dst_db
+            if isinstance(self.dst_conf, MongoConfig):
+                if isinstance(self.dst_conf.hosts, str) or isinstance(self.dst_conf.hosts, unicode):
+                    print 'dst authdb      :  %s' % self.dst_conf.authdb
+                    print 'dst username    :  %s' % self.dst_conf.username
+                    print 'dst password    :  %s' % self.dst_conf.password
+                    print 'dst db version  :  %s' % get_version(self.dst_conf.hosts)
+
+            print 'databases       :  %s' % ', '.join(self.data_filter._related_dbs)
+            print 'collections     :  %s' % ', '.join(self.data_filter._include_colls)
+            print 'db mapping      :  %s' % self.dbmap_str
+            print 'fileds          :  %s' % self.fieldmap_str
+
             print 'start optime    :  %s' % self.start_optime
             print 'log filepath    :  %s' % self.logfilepath
             print 'asyncio         :  %s' % self.asyncio
             print 'pymongo version :  %s' % pymongo.version
             print '================================================'
-

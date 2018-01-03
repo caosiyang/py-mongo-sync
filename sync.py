@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-#-*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 
 # summary: MongoDB sync tool
 # author: caosiyang
@@ -8,39 +8,29 @@
 try:
     from gevent import monkey
     monkey.patch_all()
-    gevent_support = True
-except ImportError as e:
-    gevent_support = False
+except ImportError:
+    pass
+
 from mongosync.command_options import CommandOptions
+from mongosync.config import MongoConfig, EsConfig
 from mongosync.logger import Logger
 from mongosync.mongo_synchronizer import MongoSynchronizer
+from mongosync.es_synchronizer import EsSynchronizer
+
+log = Logger.get()
 
 if __name__ == '__main__':
     conf = CommandOptions.parse()
-
     Logger.init(conf.logfilepath)
-    logger = Logger.get()
+    conf.info(log)
 
-    conf.asyncio = gevent_support
-    conf.info(logger)
+    if isinstance(conf.dst_conf, MongoConfig):
+        syncer = MongoSynchronizer(conf)
+        syncer.run()
+    elif isinstance(conf.dst_conf, EsConfig):
+        syncer = EsSynchronizer(conf)
+        syncer.run()
+    else:
+        raise Exception('invalid dst type')
 
-    syncer = MongoSynchronizer(
-            conf.src_hostportstr,
-            conf.dst_hostportstr,
-            src_engine=conf.src_engine,
-            src_authdb=conf.src_authdb,
-            src_username=conf.src_username,
-            src_password=conf.src_password,
-            dst_authdb=conf.dst_authdb,
-            dst_username=conf.dst_username,
-            dst_password=conf.dst_password,
-            dbs=conf.dbs,
-            colls=conf.colls,
-            src_db=conf.src_db,
-            dst_db=conf.dst_db,
-            ignore_indexes=False,
-            start_optime=conf.start_optime,
-            asyncio = conf.asyncio)
-    syncer.run()
-    logger.info('exit')
-
+    log.info('exit')

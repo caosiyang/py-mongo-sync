@@ -1,6 +1,7 @@
 import pymongo
 
-def mongo_connect(host, port, **kwargs):
+
+def connect(host, port, **kwargs):
     """ Connect and return a available handler.
     Recognize replica set automatically.
     Authenticate automatically if necessary.
@@ -10,7 +11,7 @@ def mongo_connect(host, port, **kwargs):
         read_preference = PRIMARY
         w = 1
     """
-    authdb = kwargs.get('authdb', 'admin') # default auth db is 'admin'
+    authdb = kwargs.get('authdb', 'admin')  # default authdb is 'admin'
     username = kwargs.get('username', '')
     password = kwargs.get('password', '')
     w = kwargs.get('w', 1)
@@ -27,18 +28,30 @@ def mongo_connect(host, port, **kwargs):
     else:
         mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000, w=w)
     if username and password and authdb:
+        # raise exception if auth failed here
         mc[authdb].authenticate(username, password)
     return mc
 
-def get_version(host, port):
-    """ Get MonogDB server version.
+
+def get_version(arg):
+    """ Get version.
     """
-    with pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000) as mc:
-        return mc.server_info()['version']
+    if isinstance(arg, pymongo.MongoClient):
+        return arg.server_info()['version']
+    elif isinstance(arg, str) or isinstance(arg, unicode):
+        host, port = parse_hostportstr(arg)
+        with pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000) as mc:
+            return mc.server_info()['version']
+    elif isinstance(arg, tuple):
+        with pymongo.MongoClient(arg[0], arg[1], connect=True, serverSelectionTimeoutMS=3000) as mc:
+            return mc.server_info()['version']
+    else:
+        raise Exception('invalid argument type @%s' % get_version.__name__)
+
 
 def get_replica_set_name(host, port, **kwargs):
     """ Get replica set name.
-    Return a empty string if it's not a replica set. 
+    Return a empty string if it's not a replica set.
     Raise exception if execute failed.
     """
     try:
@@ -54,8 +67,9 @@ def get_replica_set_name(host, port, **kwargs):
             return status['set']
         else:
             return ''
-    except pymongo.errors.OperationFailure as e:
+    except pymongo.errors.OperationFailure:
         return ''
+
 
 def get_primary(host, port, **kwargs):
     """ Get host, port, replsetName of the primary node.
@@ -82,6 +96,7 @@ def get_primary(host, port, **kwargs):
     except Exception as e:
         raise Exception('get_primary %s' % e)
 
+
 def get_optime(mc):
     """ Get optime of primary in the replica set.
 
@@ -100,11 +115,12 @@ def get_optime(mc):
             role = member.get('stateStr')
             if role == 'PRIMARY':
                 optime = member.get('optime')
-                if isinstance(optime, dict) and 'ts' in optime: # for MongoDB v3.2
+                if isinstance(optime, dict) and 'ts' in optime:  # for MongoDB v3.2
                     return optime['ts']
                 else:
                     return optime
     return None
+
 
 def get_optime_tokumx(mc):
     """ Get optime of primary in the replica set.
@@ -119,10 +135,6 @@ def get_optime_tokumx(mc):
                 return optime
     return None
 
-def replay_oplog(oplog, mc):
-    """ Replay oplog.
-    """
-    pass
 
 def parse_namespace(ns):
     """ Parse namespace.
@@ -130,12 +142,20 @@ def parse_namespace(ns):
     res = ns.split('.', 1)
     return res[0], res[1]
 
+
+def gen_namespace(dbname, collname):
+    """ Generate namespace.
+    """
+    return '%s.%s' % (dbname, collname)
+
+
 def parse_hostportstr(hostportstr):
     """ Parse hostportstr like 'xxx.xxx.xxx.xxx:xxx'
     """
     host = hostportstr.split(':')[0]
     port = int(hostportstr.split(':')[1])
     return host, port
+
 
 def collect_server_info(host, port):
     """ Collect general information of server.
@@ -145,10 +165,10 @@ def collect_server_info(host, port):
         info['version'] = mc.server_info()['version']
         return info
 
+
 def version_higher_or_equal(v1, v2):
     """ Check if v1 is higher than or equal to v2.
     """
     t1 = tuple(int(val) for val in v1.split('.'))
     t2 = tuple(int(val) for val in v2.split('.'))
     return t1 >= t2
-

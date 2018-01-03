@@ -9,7 +9,7 @@ class Logger(object):
     def init(filepath):
         """ Init logger.
         """
-        logger = logging.getLogger()
+        logger = logging.getLogger('py-mongo-sync')
         logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
         if filepath:
@@ -27,5 +27,4 @@ class Logger(object):
     def get():
         """ Get logger.
         """
-        return logging.getLogger()
-
+        return logging.getLogger('py-mongo-sync')

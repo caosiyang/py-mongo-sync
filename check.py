@@ -1,8 +1,8 @@
 import sys
 import argparse
 import pymongo
-from mongosync import filter
-from mongosync import mongo_helper
+from mongosync.data_filter import DataFilter
+from mongosync.mongo_utils import connect
 from mongosync.command_options import CheckCommandOptions
 
 def get_standard_index_name(index_items):
@@ -44,14 +44,12 @@ if __name__ == '__main__':
         conf.dbs.append(conf.src_db)
         rename_db_mode = True
 
-    db_filter = None
-    if conf.dbs:
-        db_filter = filter.DatabaseFilter()
-        db_filter.add_target_databases(conf.dbs)
+    data_filter = DataFilter()
+    data_filter.add_include_collections(['%s.*' % db for db in conf.dbs])
 
     src_host = conf.src_hostportstr.split(':')[0]
     src_port = int(conf.src_hostportstr.split(':')[1])
-    src_mc = mongo_helper.mongo_connect(
+    src_mc = connect(
             src_host,
             src_port,
             authdb=conf.src_authdb,
@@ -60,7 +58,7 @@ if __name__ == '__main__':
 
     dst_host = conf.dst_hostportstr.split(':')[0]
     dst_port = int(conf.dst_hostportstr.split(':')[1])
-    dst_mc = mongo_helper.mongo_connect(
+    dst_mc = connect(
             dst_host,
             dst_port,
             authdb=conf.dst_authdb,
@@ -84,7 +82,7 @@ if __name__ == '__main__':
     for dbname in sorted(src_mc.database_names()):
         if dbname in ignore_dbs:
             continue
-        if db_filter and not db_filter.valid_database(dbname):
+        if not data_filter.valid_db(dbname):
             continue
         for collname in sorted(src_mc[dbname].collection_names(include_system_collections=False)):
             if collname in ignore_colls:
@@ -112,7 +110,7 @@ if __name__ == '__main__':
     for dbname in sorted(src_mc.database_names()):
         if dbname in ignore_dbs:
             continue
-        if db_filter and not db_filter.valid_database(dbname):
+        if not data_filter.valid_db(dbname):
             continue
         for collname in sorted(src_mc[dbname].collection_names()):
             if collname in ignore_colls:
