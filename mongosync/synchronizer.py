@@ -38,7 +38,7 @@ class Synchronizer(object):
 
     @property
     def from_to(self):
-        return "%s => %s" % (self._conf.src_conf.hosts, self._conf.dst_conf.hosts)
+        return "%s => %s" % (self._conf.src_hostportstr, self._conf.dst_hostportstr)
 
     @property
     def log_interval(self):
@@ -127,10 +127,13 @@ class Synchronizer(object):
         """
         raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._sync_oplog.__name__))
 
-    def _print_progress(self):
+    def _print_progress(self, tag=''):
         """ Print progress.
         """
         now = time.time()
         if now - self._last_logtime > self._log_interval:
-            log.info('sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self.from_to, self._last_optime))
+            if tag:
+                log.info('sync to %s, %s, %s - %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self.from_to, self._last_optime, tag))
+            else:
+                log.info('sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self.from_to, self._last_optime))
             self._last_logtime = now

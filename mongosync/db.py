@@ -224,9 +224,7 @@ class Es(DB):
         return self._es
 
     def bulk_write(self, actions):
-        # TODO catch error
-        elasticsearch.helpers.bulk(client=self._es, actions=actions)
-        # try:
-        #     elasticsearch.helpers.bulk(client=self._es, actions=docs)
-        # except Exception as e:
-        #     log.error('bulk write failed: %s, res: %s' % e)
+        try:
+            elasticsearch.helpers.bulk(client=self._es, actions=actions)
+        except Exception as e:
+            log.error('bulk write failed: %s' % e)

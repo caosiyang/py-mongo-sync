@@ -7,7 +7,7 @@ from mongosync.config import MongoConfig, EsConfig
 from mongosync.db import Mongo, Es
 from logger import Logger
 from mongosync.synchronizer import Synchronizer
-from mongosync.doc_utils import gen_doc_with_fields
+from mongosync.doc_utils import gen_doc_with_fields, doc_flat_to_nested, merge_doc
 from mongosync.mongo_utils import parse_namespace, gen_namespace
 
 try:
@@ -37,9 +37,10 @@ class EsSynchronizer(Synchronizer):
             raise Exception('connect to elasticsearch(dst) failed: %s' % self._conf.dst_hostportstr)
 
         self._action_buf = []  # used to bulk write oplogs
+        self._last_bulk_optime = None
 
     def _action_buf_full(self):
-        return len(self._action_buf) >= 60
+        return len(self._action_buf) >= 40
 
     def _sync_database(self, dbname):
         """ Sync a database.
@@ -125,7 +126,7 @@ class EsSynchronizer(Synchronizer):
     def _sync_oplog(self, oplog_start):
         """ Replay oplog.
         """
-        self._last_optime = oplog_start
+        self._last_bulk_optime = oplog_start
 
         n_total = 0
         n_skip = 0
@@ -135,7 +136,7 @@ class EsSynchronizer(Synchronizer):
             try:
                 valid_start_optime = False
                 host, port = self._src.client().address
-                log.info('try to sync oplog from %s on %s:%d' % (self._last_optime, host, port))
+                log.info('try to sync oplog from %s on %s:%d' % (self._last_bulk_optime, host, port))
                 # set codec options to guarantee the order of keys in command
                 coll = self._src.client()['local'].get_collection('oplog.rs',
                                                                   codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
@@ -194,18 +195,23 @@ class EsSynchronizer(Synchronizer):
 
                             id = str(oplog['o2']['_id'])
 
-                            script_statements = []
-                            params = {}
-                            n_params = 0
-
                             if '$set' in oplog['o']:
+                                doc = {}
                                 for k, v in oplog['o']['$set'].iteritems():
                                     if not fields or k in fields:
-                                        script_statements.append('ctx._source.%s = v%d' % (k, n_params))
-                                        params['v%d' % n_params] = v.to_dict() if isinstance(v, bson.son.SON) else v
-                                        n_params += 1
+                                        sub_doc = doc_flat_to_nested(k.split('.'), v)
+                                        merge_doc(doc, sub_doc)
+                                if doc:
+                                    self._action_buf.append({'_op_type': 'update',
+                                                             '_index': idxname,
+                                                             '_type': typename,
+                                                             '_id': id,
+                                                             '_retry_on_conflict': 3,
+                                                             'doc': doc,
+                                                             'doc_as_upsert': True})
 
                             if '$unset' in oplog['o']:
+                                script_statements = []
                                 for keypath in oplog['o']['$unset'].iterkeys():
                                     if not fields or keypath in fields:
                                         pos = keypath.rfind('.')
@@ -213,12 +219,14 @@ class EsSynchronizer(Synchronizer):
                                             script_statements.append('ctx._source.%s.remove("%s")' % (keypath[:pos], keypath[pos+1:]))
                                         else:
                                             script_statements.append('ctx._source.remove("%s")' % keypath)
-
-                            if script_statements:
-                                doc = {'script': {'inline': '', 'params': {}}}
-                                doc['script']['inline'] = '; '.join(script_statements)
-                                doc['script']['params'] = params
-                                self._action_buf.append({'_op_type': 'update', '_index': idxname, '_type': typename, '_id': id, 'script': doc['script']})
+                                if script_statements:
+                                    doc = {'script': '; '.join(script_statements)}
+                                    self._action_buf.append({'_op_type': 'update',
+                                                             '_index': idxname,
+                                                             '_type': typename,
+                                                             '_id': id,
+                                                             '_retry_on_conflict': 3,
+                                                             'script': doc['script']})
 
                             if '$set' not in oplog['o'] and '$unset' not in oplog['o']:
                                 log.warn('unexpect oplog: %s', oplog['o'])
@@ -250,14 +258,17 @@ class EsSynchronizer(Synchronizer):
                         if self._action_buf_full():
                             self._dst.bulk_write(self._action_buf)
                             self._action_buf = []
-                            self._last_optime = oplog['ts']
-                            self._print_progress()
+                            self._last_bulk_optime = oplog['ts']
+
+                        self._last_optime = oplog['ts']
+                        self._print_progress()
                     except StopIteration as e:
                         # flush
                         if len(self._action_buf) > 0:
                             self._dst.bulk_write(self._action_buf)
                             self._action_buf = []
-                        self._print_progress()
+                            self._last_bulk_optime = self._last_optime
+                        self._print_progress('latest')
                         time.sleep(0.1)
                     except pymongo.errors.AutoReconnect as e:
                         log.error(e)

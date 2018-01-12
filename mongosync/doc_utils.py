@@ -50,7 +50,7 @@ def gen_doc_with_fields(doc, include_fields):
 
 
 def merge_doc(doc1, doc2):
-    """ Merge two documents.
+    """ Merge doc2 into doc1.
     """
     for k, v in doc2.iteritems():
         if isinstance(v, collections.Mapping):
