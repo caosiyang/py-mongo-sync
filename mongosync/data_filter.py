@@ -38,6 +38,8 @@ class DataFilter(object):
         return self.valid_coll(dbname, collname)
 
     def valid_oplog(self, oplog):
+        if not self._include_colls:
+            return True
         op = oplog['op']
         ns = oplog['ns']
         if op == 'n':
@@ -50,7 +52,7 @@ class DataFilter(object):
 
     @property
     def active(self):
-        return len(self._include_colls) > 0
+        return True if self._include_colls else False
 
     @property
     def include_colls(self):

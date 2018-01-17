@@ -132,8 +132,19 @@ class Synchronizer(object):
         """
         now = time.time()
         if now - self._last_logtime > self._log_interval:
+            delay = now - self._last_optime.time
+            time_unit = 'second' if delay <= 1 else 'seconds'
             if tag:
-                log.info('sync to %s, %s, %s - %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self.from_to, self._last_optime, tag))
+                log.info('%s - sync to %s - %d %s delay - %s - %s' % (self.from_to,
+                                                                      datetime.datetime.fromtimestamp(self._last_optime.time),
+                                                                      delay,
+                                                                      time_unit,
+                                                                      self._last_optime,
+                                                                      tag))
             else:
-                log.info('sync to %s, %s, %s' % (datetime.datetime.fromtimestamp(self._last_optime.time), self.from_to, self._last_optime))
+                log.info('%s - sync to %s - %d %s delay - %s' % (self.from_to,
+                                                                 datetime.datetime.fromtimestamp(self._last_optime.time),
+                                                                 delay,
+                                                                 time_unit,
+                                                                 self._last_optime))
             self._last_logtime = now

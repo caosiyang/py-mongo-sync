@@ -134,7 +134,6 @@ class EsSynchronizer(Synchronizer):
         while True:
             # try to get cursor until success
             try:
-                valid_start_optime = False
                 host, port = self._src.client().address
                 log.info('try to sync oplog from %s on %s:%d' % (self._last_bulk_optime, host, port))
                 # set codec options to guarantee the order of keys in command
@@ -149,6 +148,8 @@ class EsSynchronizer(Synchronizer):
                 # if mongo_utils.version_higher_or_equal(src_version, '3.2.0'):
                 #     cursor.max_await_time_ms(1000)
 
+                valid_start_optime = False  # need to validate
+
                 while True:
                     try:
                         if not cursor.alive:
@@ -158,7 +159,6 @@ class EsSynchronizer(Synchronizer):
                         oplog = cursor.next()
                         n_total += 1
 
-                        # check start optime once
                         if not valid_start_optime:
                             if oplog['ts'] == oplog_start:
                                 log.info('oplog is ok: %s' % oplog_start)
@@ -167,9 +167,10 @@ class EsSynchronizer(Synchronizer):
                                 log.error('oplog %s is stale, terminate' % oplog_start)
                                 return
 
-                        # validate oplog only for mongodb
+                        # validate oplog
                         if not self._conf.data_filter.valid_oplog(oplog):
                             n_skip += 1
+                            self._last_optime = oplog['ts']
                             continue
 
                         op = oplog['op']
