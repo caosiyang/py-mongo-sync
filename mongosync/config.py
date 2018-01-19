@@ -32,6 +32,7 @@ class Config(object):
         self.fieldmap = {}
 
         self.start_optime = None
+        self.optime_logfilepath = ''
         self.logfilepath = ''
 
         try:
@@ -98,6 +99,7 @@ class Config(object):
             logger.info('fileds          :  %s' % self.fieldmap_str)
 
             logger.info('start optime    :  %s' % self.start_optime)
+            logger.info('optime logfile  :  %s' % self.optime_logfilepath)
             logger.info('log filepath    :  %s' % self.logfilepath)
             logger.info('asyncio         :  %s' % self.asyncio)
             logger.info('pymongo version :  %s' % pymongo.version)
@@ -125,6 +127,7 @@ class Config(object):
             print 'fileds          :  %s' % self.fieldmap_str
 
             print 'start optime    :  %s' % self.start_optime
+            print 'optime logfile  :  %s' % self.optime_logfilepath
             print 'log filepath    :  %s' % self.logfilepath
             print 'asyncio         :  %s' % self.asyncio
             print 'pymongo version :  %s' % pymongo.version

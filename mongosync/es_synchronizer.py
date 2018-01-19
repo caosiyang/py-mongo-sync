@@ -239,7 +239,7 @@ class EsSynchronizer(Synchronizer):
                             self._action_buf.append({'_op_type': 'delete', '_index': idxname, '_type': typename, '_id': id})
 
                         elif op == 'c':  # command
-                            db, _ = parse_namespace(ns)
+                            dbname, _ = parse_namespace(ns)
                             idxname = self._conf.db_mapping(dbname)
                             if 'drop' in oplog['o']:
                                 # TODO
@@ -262,14 +262,16 @@ class EsSynchronizer(Synchronizer):
                             self._last_bulk_optime = oplog['ts']
 
                         self._last_optime = oplog['ts']
-                        self._print_progress()
+                        self._log_optime(oplog['ts'])
+                        self._log_progress()
                     except StopIteration as e:
                         # flush
                         if len(self._action_buf) > 0:
                             self._dst.bulk_write(self._action_buf)
                             self._action_buf = []
                             self._last_bulk_optime = self._last_optime
-                        self._print_progress('latest')
+                        self._log_optime(self._last_optime)
+                        self._log_progress('latest')
                         time.sleep(0.1)
                     except pymongo.errors.AutoReconnect as e:
                         log.error(e)
