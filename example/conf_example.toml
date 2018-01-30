@@ -1,0 +1,77 @@
+# --------
+# source configurations
+# --------
+[src]
+
+# hostportstr of a member of replica set
+hosts = "127.0.0.1:27017"
+authdb = "admin"
+username = "yourusername"
+password = "yourpassword"
+
+# --------
+# destination configurations
+# --------
+[dst]
+
+type = "mongo" # could be "mongo" or "es"
+
+[dst.mongo]
+hosts = "127.0.0.1:27018"
+authdb = "admin"
+username = "yourusername"
+password = "yourpassword"
+
+[dst.es]
+hosts = [
+    "your_es_host1:9200",
+    "your_es_host2:9200",
+    "your_es_host3:9200",
+    "your_es_host4:9200",
+    "your_es_host5:9200"
+]
+
+
+# --------
+# sync options
+# --------
+[sync]
+
+# sync database "test"
+[[sync.dbs]]
+db = "test"
+
+# sync database "test0" => "renamed_test0"
+[[sync.dbs]]
+db = "test0"
+rename_db = "renamed_test0"
+
+# sync collection "test1.coll1" => "renamed_test1.coll1"
+[[sync.dbs]]
+db = "test1"
+rename_db = "renamed_test1"
+colls = [
+    {
+        coll = "coll1",
+    }
+]
+
+# sync collection "test2.coll2" => "renamed_test2.coll2"
+# with specfied fields "filed1" and "field2"
+[[sync.dbs]]
+db = "test2"
+rename_db = "renamed_test2"
+colls = [
+    {
+        coll = "coll2",
+        fields = ["field1", "filed2"]
+    }
+]
+
+
+# --------
+# log config
+# --------
+[log]
+
+filepath = "sync.log" # write to stdout if empty or not set

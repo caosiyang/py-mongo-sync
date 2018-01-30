@@ -1,118 +1,138 @@
 # py-mongo-sync
 
-An oplog-based realtime sync tool for MongoDB written in Python.
+An oplog based realtime sync tool written in Python that could sync data from MongoDB to MongoDB and Elasticsearch.
+
 
 ## Features
 
-- full sync including data and indexes
-- oplog-based incremental sync
+- full sync (including data and indexes) and oplog based incremental sync
 - sync the specified databases
 - sync the specified collections
-- support MongoDB(v2.4 or later) and TokuMX
+- sync the sepcified fileds in collections to Elasticsearch
+- rename the destination index name for Elasticsearch
 
-## Notes
 
-- source must be a replica set
-- Ignore the following databases:
+## Requirements
+
+- source is a replica set of MongoDB v2.4 or later
+- pymongo 3.0 or later
+- gevent (for async IO and better performance, optional)
+
+
+## Notice
+
+- the following databases is ignored
     - admin
     - local
-- ignore the following collections
+- the following collections is ignored
     - system.users
     - system.profile
 - create users for destination manually if necessary
-- run as superuser through setting '--src-username' and '--src-password' if source authentication is enabled
-- you could sync a sharded-cluster by running a process for each shard, first of all, guarantee that balancer is off
+- authenticate with superuser if source authentication is enabled
+- sync sharded-cluster by running a process for each shard, first of all, guarantee that balancer is off
+- not support geospatial index
 
-## Not Supported
-
-- geospatial index
-
-## Dependency
-
-- pymongo 3.0 or later
-- gevent (for async IO and better performance, optional)
 
 ## Usage 
 
 ### sync
 
 ```bash
-usage: sync.py [-h] --from [FROM] [--src-authdb [SRC_AUTHDB]]
+usage: sync.py [-h] [-f [CONFIG]] [--src [SRC]] [--src-authdb [SRC_AUTHDB]]
                [--src-username [SRC_USERNAME]] [--src-password [SRC_PASSWORD]]
-               [--src-engine [SRC_ENGINE]] --to [TO]
-               [--dst-authdb [DST_AUTHDB]] [--dst-username [DST_USERNAME]]
-               [--dst-password [DST_PASSWORD]] [--dbs DBS [DBS ...]]
-               [--colls COLLS [COLLS ...]] [--src-db [SRC_DB]]
-               [--dst-db [DST_DB]] [--start-optime [START_OPTIME]]
-               [--log [LOG]]
+               [--dst [DST]] [--dst-authdb [DST_AUTHDB]]
+               [--dst-username [DST_USERNAME]] [--dst-password [DST_PASSWORD]]
+               [--start-optime [START_OPTIME]]
+               [--optime-logfile [OPTIME_LOGFILE]] [--logfile [LOGFILE]]
 
-Sync data from a replica-set to another mongod/replica-set/sharded-cluster.
+Sync data from a replica-set to another MongoDB/Elasticsearch.
 
 optional arguments:
   -h, --help            show this help message and exit
-  --from [FROM]         the source must be a member of replica-set
+  -f [CONFIG], --config [CONFIG]
+                        configuration file, note that command options will
+                        override items in config file
+  --src [SRC]           source should be hostportstr of a replica-set member
   --src-authdb [SRC_AUTHDB]
-                        authentication database, default is 'admin'
+                        src authentication database, default is 'admin'
   --src-username [SRC_USERNAME]
                         src username
   --src-password [SRC_PASSWORD]
                         src password
-  --src-engine [SRC_ENGINE]
-                        src engine, the value could be mongodb or tokumx,
-                        default is mongodb
-  --to [TO]             the destination should be a mongos or mongod instance
+  --dst [DST]           destination should be hostportstr of a mongos or
+                        mongod instance
   --dst-authdb [DST_AUTHDB]
-                        authentication database, default is 'admin'
+                        dst authentication database, default is 'admin', for
+                        MongoDB
   --dst-username [DST_USERNAME]
-                        dst username
+                        dst username, for MongoDB
   --dst-password [DST_PASSWORD]
-                        dst password
-  --dbs DBS [DBS ...]   databases to sync, conflict with --colls
-  --colls COLLS [COLLS ...]
-                        collections to sync, conflict with --dbs
-  --src-db [SRC_DB]     src database name, work with '--dst-db', conflict with
-                        '--dbs' and '--colls'
-  --dst-db [DST_DB]     dst database name, work with '--src-db', conflict with
-                        '--dbs' and '--colls'
+                        dst password, for MongoDB
   --start-optime [START_OPTIME]
-                        start optime, a timestamp value in second for MongoDB
-                        or a 'YYYYmmddHHMMSS' value for TokuMX
-  --log [LOG]           log file path
+                        timestamp in second, indicates oplog based increment
+                        sync
+  --optime-logfile [OPTIME_LOGFILE]
+                        optime log file path, use this as start optime if
+                        without '--start-optime'
+  --logfile [LOGFILE]   log file path
 
 ```
 
-### check
 
-```bash
-usage: check.py [-h] --from [FROM] [--src-authdb [SRC_AUTHDB]]
-                [--src-username [SRC_USERNAME]]
-                [--src-password [SRC_PASSWORD]] --to [TO]
-                [--dst-authdb [DST_AUTHDB]] [--dst-username [DST_USERNAME]]
-                [--dst-password [DST_PASSWORD]] [--dbs DBS [DBS ...]]
-                [--src-db [SRC_DB]] [--dst-db [DST_DB]]
+## Configurations
 
-Check data consistency including data and indexes.
+Use [TOML](https://github.com/toml-lang/toml) as configuration file format.
+Refer to [conf_example.toml](example/conf_example.toml).
 
-optional arguments:
-  -h, --help            show this help message and exit
-  --from [FROM]         the source must be a mongod instance of replica-set
-  --src-authdb [SRC_AUTHDB]
-                        authentication database, default is 'admin'
-  --src-username [SRC_USERNAME]
-                        src username
-  --src-password [SRC_PASSWORD]
-                        src password
-  --to [TO]             the destionation should be a mongos or mongod instance
-  --dst-authdb [DST_AUTHDB]
-                        authentication database, default is 'admin'
-  --dst-username [DST_USERNAME]
-                        dst username
-  --dst-password [DST_PASSWORD]
-                        dst password
-  --dbs DBS [DBS ...]   databases to check
-  --src-db [SRC_DB]     src database to check, work with '--dst-db', conflict
-                        with '--dbs'
-  --dst-db [DST_DB]     dst database to check, work with '--src-db', conflict
-                        with '--dbs'
-```
+### src
+Source config items.
+
+- src.hosts - hostportstr of a member of replica set
+- src.authdb - authentiction database
+- src.username - username
+- src.password - password
+
+### dst
+Destination config items.
+
+- dst.type - Destination type, either 'mongo' or 'es'
+
+- dst.mongo
+    - dst.mongo.hosts - MongoDB hostportstr
+    - dst.mongo.authdb - MongoDB authentication database
+    - dst.mongo.username - MongoDB username
+    - dst.mongo.password - MongoDB password
+
+- dst.es
+    - dst.es.hosts - Elasticsearch hosts
+
+### sync
+Custom sync options.
+
+`sync.dbs` specfies the databases to sync.
+`sync.dbs.colls` specifies the collections to sync.
+
+- sync.dbs - databases to sync, sync all databases if not specify
+    - sync.dbs.db - source database name
+    - sync.dbs.rename_db - destination database name, stay the same if not specify
+    - sync.dbs.colls - collectons to sync, sync all collections if not specify
+
+`coll` in `sync.dbs.colls` element specifies the collection to sync.
+`fileds` in `sync.dbs.colls` element specifies the fields of current collection to sync.
+
+### log
+
+- log.filepath - log file path, write to stdout if empty or not set
+
+
+##  Release Notes
+
+- v1.0.0
+    - sync data between MongoDB
+    - support TokuMX as source
+
+- v2.0.0
+    - support sync data from MongoDB to Elasticsearch
+    - never support TokuMX as source
+    - 'check' tool is inavailable now (TODO)
 
