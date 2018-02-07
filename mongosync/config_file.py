@@ -17,9 +17,9 @@ class ConfigFile(object):
 
         if tml['dst']['type'] == 'mongo':
             conf.dst_conf = MongoConfig(tml['dst']['mongo']['hosts'],
-                                        authdb=tml['src'].get('authdb', 'admin'),  # default authdb is 'admin'
-                                        username=tml['src'].get('username', ''),
-                                        password=tml['src'].get('password', ''))
+                                        authdb=tml['dst']['mongo'].get('authdb', 'admin'),  # default authdb is 'admin'
+                                        username=tml['dst']['mongo'].get('username', ''),
+                                        password=tml['dst']['mongo'].get('password', ''))
         elif tml['dst']['type'] == 'es':
             conf.dst_conf = EsConfig(tml['dst']['es']['hosts'])
 
