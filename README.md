@@ -14,13 +14,15 @@ An oplog based realtime sync tool written in Python that could sync data from Mo
 
 ## Requirements
 
-- source is a replica set of MongoDB v2.4 or later
 - pymongo 3.0 or later
 - gevent (for async IO and better performance, optional)
+- elasticsearch
+- toml
 
 
 ## Notice
 
+- source is a replica set of MongoDB v2.4 or later
 - the following databases is ignored
     - admin
     - local
