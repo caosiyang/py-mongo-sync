@@ -15,6 +15,11 @@ An oplog based realtime sync tool written in Python that could sync data from Mo
 ## Requirements
 
 - pymongo 3.0 or later
+
+    > Use pymongo 3.5.1 if your source MongoDB is version 2.4.  
+    > pymongo 3.6 adds support for MongoDB 3.6, drops support for CPython 3.3 (PyPy3 is still supported), and drops support for MongoDB versions older than 2.6.  
+    > Refer to [https://api.mongodb.com/python/3.6.0/changelog.html](https://api.mongodb.com/python/3.6.0/changelog.html).
+
 - gevent (for async IO and better performance, optional)
 - elasticsearch
 - toml
