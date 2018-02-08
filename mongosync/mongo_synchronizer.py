@@ -198,11 +198,13 @@ class MongoSynchronizer(Synchronizer):
                             dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
                             self._dst.replay_oplog(dst_dbname, dst_collname, oplog)
                         self._last_optime = oplog['ts']
+                        self._log_optime(oplog['ts'])
                         self._log_progress()
                     except StopIteration as e:
                         # no more oplogs, wait a moment
                         time.sleep(0.1)
-                        self._log_progress()
+                        self._log_optime(self._last_optime)
+                        self._log_progress('latest')
                     except pymongo.errors.AutoReconnect as e:
                         log.error(e)
                         self._src.reconnect()

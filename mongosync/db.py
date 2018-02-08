@@ -137,8 +137,8 @@ class Mongo(DB):
                 op = oplog['op']  # 'n' or 'i' or 'u' or 'c' or 'd'
 
                 if op == 'i':  # insert
-                    self._mc[dbname][collname].insert_one(oplog['o'])
-                    # self._mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
+                    # self._mc[dbname][collname].insert_one(oplog['o'])
+                    self._mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
                 elif op == 'u':  # update
                     self._mc[dbname][collname].update(oplog['o2'], oplog['o'])
                 elif op == 'd':  # delete
