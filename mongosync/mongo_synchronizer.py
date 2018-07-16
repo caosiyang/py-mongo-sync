@@ -161,7 +161,7 @@ class MongoSynchronizer(Synchronizer):
                 # set codec options to guarantee the order of keys in command
                 coll = self._src.client()['local'].get_collection('oplog.rs',
                                                                   codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
-                cursor = coll.find({'ts': {'$gte': oplog_start}},
+                cursor = coll.find({'ts': {'$gte': self._last_optime}},
                                    cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT,
                                    no_cursor_timeout=True)
 
@@ -181,11 +181,11 @@ class MongoSynchronizer(Synchronizer):
 
                         # check start optime once
                         if not start_optime_valid:
-                            if oplog['ts'] == oplog_start:
-                                log.info('oplog is ok: %s' % oplog_start)
+                            if oplog['ts'] == self._last_optime:
+                                log.info('oplog is ok: %s' % self._last_optime)
                                 start_optime_valid = True
                             else:
-                                log.error('oplog %s is stale, terminate' % oplog_start)
+                                log.error('oplog %s is stale, terminate' % self._last_optime)
                                 return
 
                         # validate oplog only for mongodb
@@ -211,5 +211,5 @@ class MongoSynchronizer(Synchronizer):
                         break
             except IndexError as e:
                 log.error(e)
-                log.error('%s not found, terminate' % oplog_start)
+                log.error('%s not found, terminate' % self._last_optime)
                 return
