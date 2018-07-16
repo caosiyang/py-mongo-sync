@@ -184,11 +184,11 @@ class MongoSynchronizer(Synchronizer):
 
                         # check start optime once
                         if not start_optime_valid:
-                            if oplog['ts'] == start_optime:
-                                log.info('oplog is ok: %s' % start_optime)
+                            if oplog['ts'] == self._last_optime:
+                                log.info('oplog is ok: %s' % self._last_optime)
                                 start_optime_valid = True
                             else:
-                                log.error('oplog %s is stale, terminate' % start_optime)
+                                log.error('oplog %s is stale, terminate' % self._last_optime)
                                 return
 
                         if oplog['op'] == 'n':  # no-op
@@ -243,5 +243,5 @@ class MongoSynchronizer(Synchronizer):
                         break
             except IndexError as e:
                 log.error(e)
-                log.error('%s not found, terminate' % start_optime)
+                log.error('%s not found, terminate' % self._last_optime)
                 return
