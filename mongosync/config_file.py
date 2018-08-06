@@ -1,4 +1,5 @@
 import toml
+from bson.timestamp import Timestamp
 from mongosync.config import Config, MongoConfig, EsConfig
 from mongosync.mongo_utils import gen_namespace
 
@@ -69,7 +70,7 @@ class ConfigFile(object):
                     conf.data_filter.add_include_coll(gen_namespace(dbname, '*'))
 
         if 'sync' in tml and 'start_optime' in tml['sync']:
-            conf.start_optime = tml['sync']['start_optime']
+            conf.start_optime = Timestamp(tml['sync']['start_optime'], 0)
 
         if 'log' in tml and 'filepath' in tml['log']:
             conf.logfilepath = tml['log']['filepath']

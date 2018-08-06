@@ -68,6 +68,11 @@ colls = [
     }
 ]
 
+# sync from the specfied the timestmap in seconds since 1970-01-01 00:00:00 UTC
+# for example:
+# start_optime is 1533526042 and sync from Timestamp(1533526042, 0)
+#start_optime = 1533526042
+
 
 # --------
 # log config
