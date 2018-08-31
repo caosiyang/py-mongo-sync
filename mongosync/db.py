@@ -102,31 +102,34 @@ class Mongo(DB):
         """
         while True:
             try:
-                self._mc[dbname][collname].bulk_write(reqs,
+                r = self._mc[dbname][collname].bulk_write(reqs,
                                                       ordered=True,
                                                       bypass_document_validation=False)
                 return
             except pymongo.errors.AutoReconnect as e:
                 log.error('%s' % e)
                 self.reconnect()
-            #except pymongo.errors.BulkWriteError as e:
-            #    log.error('%s' % e)
-            #    self.locate_bulk_write_error(dbname, collname, reqs)
-            #    return
+            except Exception as e:
+                log.error('bulk write failed: %s' % e)
+                self.locate_bulk_write_error(dbname, collname, reqs)
+                # if bulk write failed, 
+                # generally it's an odd oplog that program cannot process
+                # so abort it and bugfix
+                sys.exit(1)
 
     def locate_bulk_write_error(self, dbname, collname, reqs):
         """ Write documents one by one to locate the error(s).
         """
-        for op in reqs:
+        for req in reqs:
             while True:
                 try:
-                    self._mc[dbname][collname].replace_one(op._filter, op._doc)
+                    self._mc[dbname][collname].bulk_write([req])
                     break
                 except pymongo.errors.AutoReconnect as e:
                     log.error('%s' % e)
                     self.reconnect()
                 except Exception as e:
-                    log.error('%s when excuting %s' % (e, op))
+                    log.error('%s when excuting %s on %s.%s' % (e, req, dbname, collname))
                     break
 
     def tail_oplog(self, start_optime=None, await_time_ms=None):

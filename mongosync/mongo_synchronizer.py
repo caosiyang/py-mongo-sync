@@ -159,11 +159,6 @@ class MongoSynchronizer(Synchronizer):
         n_total = 0
         n_skip = 0
 
-        # init oplog vectors
-        oplog_vectors = []
-        for i in range(0, 10):
-            oplog_vectors.append([])
-
         while True:
             # try to get cursor until success
             try:
@@ -222,7 +217,7 @@ class MongoSynchronizer(Synchronizer):
                                 need_log = True
                             else:
                                 self._multi_oplog_replayer.push(oplog)
-                                if self._multi_oplog_replayer.count() >= 100:
+                                if self._multi_oplog_replayer.count() >= 1000:
                                     self._multi_oplog_replayer.apply()
                                     self._multi_oplog_replayer.clear()
                                     self._last_optime = oplog['ts']
