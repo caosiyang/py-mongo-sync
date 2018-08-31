@@ -139,7 +139,7 @@ class Synchronizer(object):
         raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._sync_oplog.__name__))
 
     def _log_progress(self, tag=''):
-        """ Print progress.
+        """ Print progress periodically.
         """
         now = time.time()
         if now - self._last_logtime >= self._log_interval:
@@ -161,7 +161,7 @@ class Synchronizer(object):
             self._last_logtime = now
 
     def _log_optime(self, optime):
-        """ Record optime.
+        """ Record optime periodically.
         """
         if not self._optime_logger:
             return

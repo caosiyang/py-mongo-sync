@@ -1,11 +1,11 @@
 import time
 import pymongo
-import bson
 import mongo_utils
 from mongosync.config import MongoConfig
 from mongosync.db import Mongo
 from mongosync.logger import Logger
 from mongosync.synchronizer import Synchronizer
+from mongosync.multi_oplog_replayer import MultiOplogReplayer
 
 try:
     import gevent
@@ -31,6 +31,10 @@ class MongoSynchronizer(Synchronizer):
         self._dst = Mongo(self._conf.dst_conf)
         if not self._dst.connect():
             raise Exception('connect to mongodb(dst) failed: %s' % self._conf.dst_hostportstr)
+        self._multi_oplog_replayer = None
+        engine = self._dst.client()['admin'].command('serverStatus')['storageEngine']['name']
+        if self._conf.asyncio and engine.lower() == 'wiredtiger':
+            self._multi_oplog_replayer = MultiOplogReplayer(self._dst, 10)
 
     def _sync_database(self, dbname):
         """ Sync a database.
@@ -42,6 +46,9 @@ class MongoSynchronizer(Synchronizer):
         #    Another reason is for TokuMX. It does not support 'dropDups' option for an uniuqe index.
         #    The 'duplicate keys' error must cause index creation failed.
         log.info("sync database '%s'" % dbname)
+
+        # TODO create collections
+
         self._sync_indexes(dbname)
         self._sync_collections(dbname)
 
@@ -81,7 +88,7 @@ class MongoSynchronizer(Synchronizer):
                     options['partialFilterExpression'] = info['partialFilterExpression']
                 if 'dropDups' in info:
                     options['dropDups'] = info['dropDups']
-                # create indexes before import documents, ignore 'background' option
+                # create indexes before import documents, so not need 'background' option
                 # if 'background' in info:
                 #     options['background'] = info['background']
                 self._dst.create_index(dst_dbname, dst_collname, format(keys), **options)
@@ -144,34 +151,35 @@ class MongoSynchronizer(Synchronizer):
             except pymongo.errors.AutoReconnect:
                 self._src.reconnect()
 
-    def _sync_oplog(self, oplog_start):
+    def _sync_oplog(self, start_optime):
         """ Replay oplog.
         """
-        self._last_optime = oplog_start
+        self._last_optime = start_optime
 
         n_total = 0
         n_skip = 0
+
+        # init oplog vectors
+        oplog_vectors = []
+        for i in range(0, 10):
+            oplog_vectors.append([])
 
         while True:
             # try to get cursor until success
             try:
                 start_optime_valid = False
+                need_log = False
                 host, port = self._src.client().address
                 log.info('try to sync oplog from %s on %s:%d' % (self._last_optime, host, port))
-                # set codec options to guarantee the order of keys in command
-                coll = self._src.client()['local'].get_collection('oplog.rs',
-                                                                  codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
-                cursor = coll.find({'ts': {'$gte': self._last_optime}},
-                                   cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT,
-                                   no_cursor_timeout=True)
-
-                # New in version 3.2
-                # src_version = mongo_utils.get_version(self._src.client())
-                # if mongo_utils.version_higher_or_equal(src_version, '3.2.0'):
-                #     cursor.max_await_time_ms(1000)
+                cursor = self._src.tail_oplog(start_optime)
 
                 while True:
                     try:
+                        if need_log:
+                            self._log_optime(self._last_optime)
+                            self._log_progress()
+                            need_log = False
+
                         if not cursor.alive:
                             log.error('cursor is dead')
                             raise pymongo.errors.AutoReconnect
@@ -181,26 +189,55 @@ class MongoSynchronizer(Synchronizer):
 
                         # check start optime once
                         if not start_optime_valid:
-                            if oplog['ts'] == self._last_optime:
-                                log.info('oplog is ok: %s' % self._last_optime)
+                            if oplog['ts'] == start_optime:
+                                log.info('oplog is ok: %s' % start_optime)
                                 start_optime_valid = True
                             else:
-                                log.error('oplog %s is stale, terminate' % self._last_optime)
+                                log.error('oplog %s is stale, terminate' % start_optime)
                                 return
+
+                        if oplog['op'] == 'n':  # no-op
+                            self._last_optime = oplog['ts']
+                            need_log = True
+                            continue
 
                         # validate oplog only for mongodb
                         if not self._conf.data_filter.valid_oplog(oplog):
                             n_skip += 1
+                            self._last_optime = oplog['ts']
+                            need_log = True
                             continue
 
-                        if oplog['op'] != 'n':  # no-op
-                            dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
-                            dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
-                            self._dst.replay_oplog(dst_dbname, dst_collname, oplog)
-                        self._last_optime = oplog['ts']
-                        self._log_optime(oplog['ts'])
-                        self._log_progress()
+                        dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
+                        dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
+                        if dst_dbname != dbname or dst_collname != collname:
+                            oplog['ns'] = '%s.%s' % (dst_dbname, dst_collname)
+
+                        if self._multi_oplog_replayer:
+                            if mongo_utils.is_command(oplog):
+                                self._multi_oplog_replayer.apply()
+                                self._multi_oplog_replayer.clear()
+                                self._dst.replay_oplog(oplog)
+                                self._last_optime = oplog['ts']
+                                need_log = True
+                            else:
+                                self._multi_oplog_replayer.push(oplog)
+                                if self._multi_oplog_replayer.count() >= 100:
+                                    self._multi_oplog_replayer.apply()
+                                    self._multi_oplog_replayer.clear()
+                                    self._last_optime = oplog['ts']
+                                    need_log = True
+                        else:
+                            self._dst.replay_oplog(oplog)
+                            self._last_optime = oplog['ts']
+                            need_log = True
                     except StopIteration as e:
+                        if self._multi_oplog_replayer.count() > 0:
+                            self._multi_oplog_replayer.apply()
+                            self._multi_oplog_replayer.clear()
+                            self._last_optime = self._multi_oplog_replayer.last_optime()
+                            need_log = True
+                        
                         # no more oplogs, wait a moment
                         time.sleep(0.1)
                         self._log_optime(self._last_optime)
@@ -211,5 +248,5 @@ class MongoSynchronizer(Synchronizer):
                         break
             except IndexError as e:
                 log.error(e)
-                log.error('%s not found, terminate' % self._last_optime)
+                log.error('%s not found, terminate' % start_optime)
                 return

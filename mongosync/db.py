@@ -1,6 +1,7 @@
 import sys
 import time
 import pymongo
+import bson
 import elasticsearch
 import elasticsearch.helpers
 import mongo_utils
@@ -31,7 +32,6 @@ class DB(object):
 
     def replay_oplog(self):
         raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.replay_oplog.__name__))
-
 
 class Mongo(DB):
     def __init__(self, conf):
@@ -109,10 +109,10 @@ class Mongo(DB):
             except pymongo.errors.AutoReconnect as e:
                 log.error('%s' % e)
                 self.reconnect()
-            except pymongo.errors.BulkWriteError as e:
-                log.error('%s' % e)
-                self.locate_bulk_write_error(dbname, collname, reqs)
-                return
+            #except pymongo.errors.BulkWriteError as e:
+            #    log.error('%s' % e)
+            #    self.locate_bulk_write_error(dbname, collname, reqs)
+            #    return
 
     def locate_bulk_write_error(self, dbname, collname, reqs):
         """ Write documents one by one to locate the error(s).
@@ -129,16 +129,41 @@ class Mongo(DB):
                     log.error('%s when excuting %s' % (e, op))
                     break
 
-    def replay_oplog(self, dbname, collname, oplog):
+    def tail_oplog(self, start_optime=None, await_time_ms=None):
+        """ Return a tailable curosr of local.oplog.rs from the specified optime.
+        """
+        # set codec options to guarantee the order of keys in command
+        coll = self._mc['local'].get_collection('oplog.rs', 
+                                                codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
+        cursor = coll.find({'ts': {'$gte': start_optime}},
+                           cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT,
+                           no_cursor_timeout=True)
+        # New in version 3.2
+        # src_version = mongo_utils.get_version(self._mc)
+        # if mongo_utils.version_higher_or_equal(src_version, '3.2.0'):
+        #     cursor.max_await_time_ms(1000)
+        return cursor
+
+    def replay_oplog(self, oplog):
         """ Replay oplog.
         """
+        dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
         while True:
             try:
                 op = oplog['op']  # 'n' or 'i' or 'u' or 'c' or 'd'
 
                 if op == 'i':  # insert
-                    # self._mc[dbname][collname].insert_one(oplog['o'])
-                    self._mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
+                    if '_id' in oplog['o']:
+                        self._mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
+                    else:
+                        # create index
+                        # insert into db.system.indexes
+                        # TODO error occured if field name has '.' in index key
+                        try:
+                            self._mc[dbname][collname].insert_one(oplog['o'])
+                        except Exception as e:
+                            log.error('%s: %s' % (e, oplog))
+                            raise e
                 elif op == 'u':  # update
                     self._mc[dbname][collname].update(oplog['o2'], oplog['o'])
                 elif op == 'd':  # delete
@@ -150,11 +175,11 @@ class Mongo(DB):
                     try:
                         self._mc[dbname].command(oplog['o'])
                     except pymongo.errors.OperationFailure as e:
-                        log.error('%s: %s' % (e, op))
+                        log.error('%s: %s' % (e, oplog))
                 elif op == 'n':  # no-op
                     pass
                 else:
-                    log.error('invaid optype: %s' % oplog)
+                    log.error('invaid op: %s' % oplog)
                 return
             except pymongo.errors.DuplicateKeyError as e:
                 # TODO
@@ -193,7 +218,6 @@ class Mongo(DB):
                     if not res.inserted_id:
                         log.error('replay update failed: insert new document failed:', new_doc)
                         sys.exit(1)
-
 
 class Es(DB):
     def __init__(self, conf):

@@ -101,7 +101,7 @@ class Config(object):
             logger.info('start optime    :  %s' % self.start_optime)
             logger.info('optime logfile  :  %s' % self.optime_logfilepath)
             logger.info('log filepath    :  %s' % self.logfilepath)
-            logger.info('asyncio         :  %s' % self.asyncio)
+            logger.info('gevent          :  %s' % self.asyncio)
             logger.info('pymongo version :  %s' % pymongo.version)
             logger.info('================================================')
         else:
@@ -129,6 +129,6 @@ class Config(object):
             print 'start optime    :  %s' % self.start_optime
             print 'optime logfile  :  %s' % self.optime_logfilepath
             print 'log filepath    :  %s' % self.logfilepath
-            print 'asyncio         :  %s' % self.asyncio
+            print 'gevent          :  %s' % self.asyncio
             print 'pymongo version :  %s' % pymongo.version
             print '================================================'

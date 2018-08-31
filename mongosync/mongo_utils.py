@@ -172,3 +172,13 @@ def version_higher_or_equal(v1, v2):
     t1 = tuple(int(val) for val in v1.split('.'))
     t2 = tuple(int(val) for val in v2.split('.'))
     return t1 >= t2
+
+
+def is_command(oplog):
+    """ Check if oplog is a command.
+    """
+    op = oplog['op']
+    # createIndex() could insert a document without _id into *.system.indexes
+    if op == 'c' or (op == 'i' and '_id' not in oplog['o']):
+        return True
+    return False
