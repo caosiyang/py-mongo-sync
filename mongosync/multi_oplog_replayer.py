@@ -112,8 +112,6 @@ class MultiOplogReplayer:
                             vecs[m % n]._oplogs.append(pymongo.UpdateOne({'_id': oplog['o2']['_id']}, oplog['o']))
                         else:
                             vecs[m % n]._oplogs.append(pymongo.ReplaceOne({'_id': oplog['o2']['_id']}, oplog['o'], upsert=True))
-
-                        vecs[m % n]._oplogs.append(pymongo.UpdateOne({'_id': oplog['o2']['_id']}, oplog['o']))
                     elif op == 'i':
                         m = self.hash(oplog['o']['_id'])
                         vecs[m % n]._oplogs.append(pymongo.ReplaceOne({'_id': oplog['o']['_id']}, oplog['o'], upsert=True))
