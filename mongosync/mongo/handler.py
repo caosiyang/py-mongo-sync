@@ -2,38 +2,14 @@ import sys
 import time
 import pymongo
 import bson
-import elasticsearch
-import elasticsearch.helpers
-import mongo_utils
-from mongosync.config import MongoConfig, EsConfig
+from mongosync import mongo_utils
+from mongosync.common_handler import CommonHandler
+from mongosync.config import MongoConfig
 from mongosync.logger import Logger
 
 log = Logger.get()
 
-
-class DB(object):
-    """ Abstract database.
-    All database entities should implement the following methods.
-    """
-    def client(self):
-        raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.client.__name__))
-
-    def connect(self):
-        raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.connect.__name__))
-
-    def reconnect(self):
-        raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.reconnect.__name__))
-
-    def close(self):
-        raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.close.__name__))
-
-    def bulk_write(self):
-        raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.bulk_write.__name__))
-
-    def replay_oplog(self):
-        raise Exception('you should implement %s.%s' % (self.__class__.__name_, self.replay_oplog.__name__))
-
-class Mongo(DB):
+class MongoHandler(CommonHandler):
     def __init__(self, conf):
         if not isinstance(conf, MongoConfig):
             raise Exception('expect MongoConfig')
@@ -221,37 +197,3 @@ class Mongo(DB):
                     if not res.inserted_id:
                         log.error('replay update failed: insert new document failed:', new_doc)
                         sys.exit(1)
-
-class Es(DB):
-    def __init__(self, conf):
-        if not isinstance(conf, EsConfig):
-            raise Exception('expect EsConfig')
-        self._conf = conf
-        self._es = None
-
-    def __del__(self):
-        self.close()
-
-    def connect(self):
-        self._es = elasticsearch.Elasticsearch(self._conf.hosts, timeout=600)
-        return self._es.ping()
-
-    def reconnect(self):
-        while True:
-            res = self.connect()
-            if not res:
-                time.sleep(1)
-                continue
-            return
-
-    def close(self):
-        self._es = None
-
-    def client(self):
-        return self._es
-
-    def bulk_write(self, actions):
-        try:
-            elasticsearch.helpers.bulk(client=self._es, actions=actions)
-        except Exception as e:
-            log.error('bulk write failed: %s' % e)

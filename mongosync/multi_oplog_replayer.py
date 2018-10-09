@@ -2,7 +2,7 @@ import pymongo
 import gevent
 import mmh3
 import mongo_utils
-from mongosync.db import Mongo
+from mongosync.mongo.syncer import MongoHandler
 from mongosync.logger import Logger
 
 log = Logger.get()
@@ -26,7 +26,7 @@ class MultiOplogReplayer(object):
           - n_writers: maximum coroutine count
           - batch_size: maximum oplog count in a batch, 40 is empiric value
         """
-        assert isinstance(mc, Mongo)
+        assert isinstance(mc, MongoHandler)
         assert n_writers > 0
         assert batch_size > 0
         self._mc = mc

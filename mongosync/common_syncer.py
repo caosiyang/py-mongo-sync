@@ -15,10 +15,10 @@ except ImportError:
 log = Logger.get()
 
 
-class Synchronizer(object):
-    """ Common synchronizer.
+class CommonSyncer(object):
+    """ Common database synchronizer.
 
-    Other synchronizer entities should implement methods:
+    Specific database synchronizer implements the following interfaces:
         - __init__
         - __del__
         - _sync_database

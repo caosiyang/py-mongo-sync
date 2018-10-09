@@ -3,12 +3,13 @@ import pymongo
 import bson
 import elasticsearch
 import elasticsearch.helpers
+from mongosync.logger import Logger
+from mongosync.common_syncer import CommonSyncer
 from mongosync.config import MongoConfig, EsConfig
-from mongosync.db import Mongo, Es
-from logger import Logger
-from mongosync.synchronizer import Synchronizer
 from mongosync.doc_utils import gen_doc_with_fields, doc_flat_to_nested, merge_doc
 from mongosync.mongo_utils import parse_namespace, gen_namespace
+from mongosync.mongo.handler import MongoHandler
+from mongosync.es.handler import EsHandler
 
 try:
     import gevent
@@ -18,15 +19,15 @@ except ImportError:
 log = Logger.get()
 
 
-class EsSynchronizer(Synchronizer):
+class EsSyncer(CommonSyncer):
     """ Elasticsearch synchronizer.
     """
     def __init__(self, conf):
-        Synchronizer.__init__(self, conf)
+        CommonSyncer.__init__(self, conf)
 
         if not isinstance(self._conf.src_conf, MongoConfig):
             raise Exception('invalid src config type')
-        self._src = Mongo(self._conf.src_conf)
+        self._src = MongoHanler(self._conf.src_conf)
         if not self._src.connect():
             raise Exception('connect to mongodb(src) failed: %s' % self._conf.src_hostportstr)
 

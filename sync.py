@@ -14,8 +14,8 @@ except ImportError:
 from mongosync.command_options import CommandOptions
 from mongosync.config import MongoConfig, EsConfig
 from mongosync.logger import Logger
-from mongosync.mongo_synchronizer import MongoSynchronizer
-from mongosync.es_synchronizer import EsSynchronizer
+from mongosync.mongo.syncer import MongoSyncer
+from mongosync.es.syncer import EsSyncer
 
 log = Logger.get()
 
@@ -25,10 +25,10 @@ if __name__ == '__main__':
     conf.info(log)
 
     if isinstance(conf.dst_conf, MongoConfig):
-        syncer = MongoSynchronizer(conf)
+        syncer = MongoSyncer(conf)
         syncer.run()
     elif isinstance(conf.dst_conf, EsConfig):
-        syncer = EsSynchronizer(conf)
+        syncer = EsSyncer(conf)
         syncer.run()
     else:
         raise Exception('invalid dst type')

@@ -1,10 +1,10 @@
 import time
 import pymongo
-import mongo_utils
-from mongosync.config import MongoConfig
-from mongosync.db import Mongo
+from mongosync import mongo_utils
 from mongosync.logger import Logger
-from mongosync.synchronizer import Synchronizer
+from mongosync.config import MongoConfig
+from mongosync.common_syncer import CommonSyncer
+from mongosync.mongo.handler import MongoHandler
 from mongosync.multi_oplog_replayer import MultiOplogReplayer
 
 try:
@@ -15,20 +15,20 @@ except ImportError:
 log = Logger.get()
 
 
-class MongoSynchronizer(Synchronizer):
+class MongoSyncer(CommonSyncer):
     """ MongoDB synchronizer.
     """
     def __init__(self, conf):
-        Synchronizer.__init__(self, conf)
+        CommonSyncer.__init__(self, conf)
 
         if not isinstance(self._conf.src_conf, MongoConfig):
             raise Exception('invalid src config type')
-        self._src = Mongo(self._conf.src_conf)
+        self._src = MongoHandler(self._conf.src_conf)
         if not self._src.connect():
             raise Exception('connect to mongodb(src) failed: %s' % self._conf.src_hostportstr)
         if not isinstance(self._conf.dst_conf, MongoConfig):
             raise Exception('invalid dst config type')
-        self._dst = Mongo(self._conf.dst_conf)
+        self._dst = MongoHandler(self._conf.dst_conf)
         if not self._dst.connect():
             raise Exception('connect to mongodb(dst) failed: %s' % self._conf.dst_hostportstr)
         self._multi_oplog_replayer = None
