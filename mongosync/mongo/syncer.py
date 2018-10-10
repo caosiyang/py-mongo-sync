@@ -3,7 +3,7 @@ import pymongo
 from mongosync import mongo_utils
 from mongosync.logger import Logger
 from mongosync.config import MongoConfig
-from mongosync.common_syncer import CommonSyncer
+from mongosync.common_syncer import CommonSyncer, Progress
 from mongosync.mongo.handler import MongoHandler
 from mongosync.multi_oplog_replayer import MultiOplogReplayer
 
@@ -36,23 +36,17 @@ class MongoSyncer(CommonSyncer):
         if self._conf.asyncio and engine.lower() == 'wiredtiger':
             self._multi_oplog_replayer = MultiOplogReplayer(self._dst, 10)
 
-    def _sync_database(self, dbname):
-        """ Sync a database.
+    def _initial_sync(self):
+        """ Initial sync to MongoDB.
         """
         # Q: Why create indexes first?
-        # A: It may occured that create indexes failed after you have imported the data,
-        #    for example, when you create an unique index without 'dropDups' option and get a 'duplicate keys' error.
-        #    Because when you export and import data, duplicate key document may be produced.
-        #    Another reason is for TokuMX. It does not support 'dropDups' option for an uniuqe index.
-        #    The 'duplicate keys' error must cause index creation failed.
-        log.info("sync database '%s'" % dbname)
+        # A: Create indexes may failed if import the documents first.
+        #    For example, create an unique index without 'dropDups' option and duplicate key error occured.
+        #    Duplicate key document could be produced in initial sync.
+        self._sync_indexes()
+        CommonSyncer._initial_sync(self)
 
-        # TODO create collections
-
-        self._sync_indexes(dbname)
-        self._sync_collections(dbname)
-
-    def _sync_indexes(self, dbname):
+    def _sync_indexes(self):
         """ Create indexes.
         """
         def format(key_direction_list):
@@ -65,51 +59,53 @@ class MongoSyncer(CommonSyncer):
                 res.append((key, direction))
             return res
 
-        for collname in self._src.client()[dbname].collection_names(include_system_collections=False):
-            if collname in self._ignore_colls:
+        for dbname in self._src.client().database_names():
+            if dbname in self._ignore_dbs:
                 continue
-            if not self._conf.data_filter.valid_index(dbname, collname):
+            if not self._conf.data_filter.valid_db(dbname):
                 continue
+            for collname in self._src.client()[dbname].collection_names(include_system_collections=False):
+                if collname in self._ignore_colls:
+                    continue
+                if not self._conf.data_filter.valid_index(dbname, collname):
+                    continue
+                dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
+                index_info = self._src.client()[dbname][collname].index_information()
+                for name, info in index_info.iteritems():
+                    keys = info['key']
+                    options = {}
+                    options['name'] = name
+                    if 'unique' in info:
+                        options['unique'] = info['unique']
+                    if 'sparse' in info:
+                        options['sparse'] = info['sparse']
+                    if 'expireAfterSeconds' in info:
+                        options['expireAfterSeconds'] = info['expireAfterSeconds']
+                    if 'partialFilterExpression' in info:
+                        options['partialFilterExpression'] = info['partialFilterExpression']
+                    if 'dropDups' in info:
+                        options['dropDups'] = info['dropDups']
+                    # create indexes before import documents, so not need 'background' option
+                    # if 'background' in info:
+                    #     options['background'] = info['background']
+                    self._dst.create_index(dst_dbname, dst_collname, format(keys), **options)
 
-            dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
-
-            index_info = self._src.client()[dbname][collname].index_information()
-            for name, info in index_info.iteritems():
-                keys = info['key']
-                options = {}
-                options['name'] = name
-                if 'unique' in info:
-                    options['unique'] = info['unique']
-                if 'sparse' in info:
-                    options['sparse'] = info['sparse']
-                if 'expireAfterSeconds' in info:
-                    options['expireAfterSeconds'] = info['expireAfterSeconds']
-                if 'partialFilterExpression' in info:
-                    options['partialFilterExpression'] = info['partialFilterExpression']
-                if 'dropDups' in info:
-                    options['dropDups'] = info['dropDups']
-                # create indexes before import documents, so not need 'background' option
-                # if 'background' in info:
-                #     options['background'] = info['background']
-                self._dst.create_index(dst_dbname, dst_collname, format(keys), **options)
-
-    def _sync_collection(self, dbname, collname):
+    def _sync_collection(self, namespace_tuple):
         """ Sync a collection until success.
         """
-        src_dbname, src_collname = dbname, collname
-        dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
+        src_dbname, src_collname = namespace_tuple[0], namespace_tuple[1]
+        dst_dbname, dst_collname = self._conf.db_coll_mapping(src_dbname, src_collname)
+        src_ns = '%s.%s' % (src_dbname, src_collname)
+        dst_ns = '%s.%s' % (dst_dbname, dst_collname)
+        start_time = time.time()
 
         while True:
             try:
-                log.info("sync collection '%s.%s' => '%s.%s'" % (src_dbname, src_collname, dst_dbname, dst_collname))
                 cursor = self._src.client()[src_dbname][src_collname].find(filter=None,
                                                                            cursor_type=pymongo.cursor.CursorType.EXHAUST,
                                                                            no_cursor_timeout=True,
                                                                            modifiers={'$snapshot': True})
                 count = cursor.count()
-                if count == 0:
-                    log.info('    skip empty collection')
-                    return
 
                 n = 0
                 reqs = []
@@ -134,7 +130,8 @@ class MongoSyncer(CommonSyncer):
                             reqs = []
                     n += 1
                     if n % 10000 == 0:
-                        log.info('    %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
+                        self._progress_queue.put(Progress(src_ns, n, count, False, start_time))
+                        log.info('\t%s\t%d/%d\t(%.1f%%)' % (src_ns, n, count, float(n)/count*100))
 
                 if self._conf.asyncio:
                     if len(groups) > 0:
@@ -146,12 +143,17 @@ class MongoSyncer(CommonSyncer):
                     if len(reqs) > 0:
                         self._dst.bulk_write(dst_dbname, dst_collname, reqs)
 
-                log.info('    %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
+                self._progress_queue.put(Progress(src_ns, n, count, True, start_time))
+                log.info("[ OK ] sync collection\t%s\t%d/%d\t(%.1f%%)" % (
+                    src_ns if src_ns == dst_ns else '%s => %s' % (src_ns, dst_ns),
+                    n,
+                    count,
+                    float(n)/count*100 if count > 0 else float(n+1)/(count+1)*100))
                 return
             except pymongo.errors.AutoReconnect:
                 self._src.reconnect()
 
-    def _sync_oplog(self, start_optime):
+    def _replay_oplog(self, start_optime):
         """ Replay oplog.
         """
         self._last_optime = start_optime
@@ -232,7 +234,6 @@ class MongoSyncer(CommonSyncer):
                             self._multi_oplog_replayer.clear()
                             self._last_optime = self._multi_oplog_replayer.last_optime()
                             need_log = True
-                        
                         # no more oplogs, wait a moment
                         time.sleep(0.1)
                         self._log_optime(self._last_optime)

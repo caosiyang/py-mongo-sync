@@ -2,6 +2,7 @@ import sys
 import logging
 import logging.handlers
 
+
 class Logger(object):
     """ Global logger.
     """
@@ -22,7 +23,7 @@ class Logger(object):
             handler_stdout.setFormatter(formatter)
             handler_stdout.setLevel(logging.INFO)
             logger.addHandler(handler_stdout)
-    
+
     @staticmethod
     def get():
         """ Get logger.

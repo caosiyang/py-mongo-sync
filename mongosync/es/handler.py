@@ -1,12 +1,13 @@
+import time
 import elasticsearch
 import elasticsearch.helpers
-from mongosync.common_handler import CommonHandler
 from mongosync.config import EsConfig
 from mongosync.logger import Logger
 
 log = Logger.get()
 
-class EsHandler(CommonHandler):
+
+class EsHandler(object):
     def __init__(self, conf):
         if not isinstance(conf, EsConfig):
             raise Exception('expect EsConfig')

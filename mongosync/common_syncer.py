@@ -2,6 +2,9 @@ import sys
 import time
 import datetime
 import exceptions
+import Queue
+import threading
+import gevent
 from mongosync.config import Config
 from mongosync.logger import Logger
 from mongosync.mongo_utils import get_optime, gen_namespace
@@ -15,15 +18,54 @@ except ImportError:
 log = Logger.get()
 
 
+class Progress(object):
+    def __init__(self, ns, curr, total, done, start_time):
+        self.ns = ns
+        self.curr = curr
+        self.total = total
+        self.done = done
+        self.start_time = start_time
+
+
+class ProgressLogger(threading.Thread):
+    def __init__(self, queue, n_colls, **kwargs):
+        self.queue = queue
+        self.n_colls = n_colls
+        self.map = {}
+        super(ProgressLogger, self).__init__(**kwargs)
+
+    def run(self):
+        n_colls_done = 0
+        while n_colls_done < self.n_colls:
+            p = self.queue.get()
+            self.map[p.ns] = p
+
+            if p.done:
+                time_used = time.time() - p.start_time
+                sys.stdout.write('\r\33[K')
+                sys.stdout.write('\r[\033[32m OK \033[0m] %s\t%d/%d\t%.1fs\n' % (p.ns, p.curr, p.total, time_used))
+                sys.stdout.flush()
+
+                del self.map[p.ns]
+                n_colls_done += 1
+
+            s = ''
+            for ns, p in self.map.iteritems():
+                s += '|| %s  %d/%d  %.1f%% ' % (ns, p.curr, p.total, float(p.curr)/p.total*100)
+            if len(s) > 0:
+                s += '||'
+                sys.stdout.write('\r%s' % s)
+                sys.stdout.flush()
+
+
 class CommonSyncer(object):
     """ Common database synchronizer.
 
-    Specific database synchronizer implements the following interfaces:
+    Specific database synchronizer should implement the following methods:
         - __init__
-        - __del__
-        - _sync_database
+        - _initial_sync
         - _sync_collection
-        - _sync_oplog
+        - _replay_oplog
     """
     def __init__(self, conf):
         if not isinstance(conf, Config):
@@ -44,6 +86,8 @@ class CommonSyncer(object):
         self._log_interval = 2  # default 2s
         self._last_logtime = time.time()  # use in oplog replay
 
+        self._progress_queue = Queue.Queue()
+
     @property
     def from_to(self):
         return "%s => %s" % (self._conf.src_hostportstr, self._conf.dst_hostportstr)
@@ -62,7 +106,7 @@ class CommonSyncer(object):
         """ Start to sync.
         """
         # never drop database automatically
-        # you should clear the databases manually if necessary
+        # clear data manually if necessary
         try:
             self._sync()
         except exceptions.KeyboardInterrupt:
@@ -72,34 +116,32 @@ class CommonSyncer(object):
         """ Sync databases and oplog.
         """
         if self._conf.start_optime:
-            # TODO optimize
             log.info("locating oplog, it will take a while")
             oplog_start = self._conf.start_optime
             doc = self._src.client()['local']['oplog.rs'].find_one({'ts': {'$gte': oplog_start}})
             if not doc:
-                log.error('no oplogs newer than the specified oplog')
+                log.error('oplog is stale')
                 return
             oplog_start = doc['ts']
             log.info('start timestamp is %s actually' % oplog_start)
             self._last_optime = oplog_start
-            self._sync_oplog(oplog_start)
+            self._replay_oplog(oplog_start)
         else:
             oplog_start = get_optime(self._src.client())
             if not oplog_start:
                 log.error('get oplog_start failed, terminate')
                 sys.exit(1)
             self._last_optime = oplog_start
-            self._sync_databases()
+            self._initial_sync()
             if self._optime_logger:
                 self._optime_logger.write(oplog_start)
                 log.info('first %s' % oplog_start)
-            self._sync_oplog(oplog_start)
+            self._replay_oplog(oplog_start)
 
-    def _sync_databases(self):
-        """ Sync databases excluding 'admin' and 'local'.
+    def _initial_sync(self):
+        """ Initial sync.
         """
-        host, port = self._src.client().address
-        log.info('sync databases from %s:%d' % (host, port))
+        colls = []
         for dbname in self._src.client().database_names():
             if dbname in self._ignore_dbs:
                 log.info("skip database '%s'" % dbname)
@@ -107,36 +149,34 @@ class CommonSyncer(object):
             if not self._conf.data_filter.valid_db(dbname):
                 log.info("skip database '%s'" % dbname)
                 continue
-            self._sync_database(dbname)
-        log.info('all databases done')
+            for collname in self._src.client()[dbname].collection_names(include_system_collections=False):
+                if collname in self._ignore_colls:
+                    log.info("skip collection '%s'" % gen_namespace(dbname, collname))
+                    continue
+                if not self._conf.data_filter.valid_coll(dbname, collname):
+                    log.info("skip collection '%s'" % gen_namespace(dbname, collname))
+                    continue
+                colls.append((dbname, collname))
 
-    def _sync_database(self, dbname):
-        """ Sync a database.
-        """
-        raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._sync_database.__name__))
+        t = ProgressLogger(self._progress_queue, len(colls))
+        t.start()
 
-    def _sync_collections(self, dbname):
-        """ Sync collections in the database excluding system collections.
-        """
-        collnames = self._src.client()[dbname].collection_names(include_system_collections=False)
-        for collname in collnames:
-            if collname in self._ignore_colls:
-                log.info("skip collection '%s'" % gen_namespace(dbname, collname))
-                continue
-            if not self._conf.data_filter.valid_coll(dbname, collname):
-                log.info("skip collection '%s'" % gen_namespace(dbname, collname))
-                continue
-            self._sync_collection(dbname, collname)
+        pool = gevent.pool.Pool(4)
+        for res in pool.imap(self._sync_collection, colls):
+            if res is not None:
+                sys.exit(1)
+
+        t.join()
 
     def _sync_collection(self, dbname, collname):
         """ Sync a collection until success.
         """
         raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._sync_collection.__name__))
 
-    def _sync_oplog(self, oplog_start):
+    def _replay_oplog(self, oplog_start):
         """ Replay oplog.
         """
-        raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._sync_oplog.__name__))
+        raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._replay_oplog.__name__))
 
     def _log_progress(self, tag=''):
         """ Print progress periodically.

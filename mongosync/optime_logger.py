@@ -52,6 +52,7 @@ class OptimeLogger(object):
         """
         return self._filepath
 
+
 if __name__ == '__main__':
     optime_logger = OptimeLogger('optimelog.tmp.0')
     optime_logger.write(Timestamp(0, 1))

@@ -3,13 +3,13 @@ import time
 import pymongo
 import bson
 from mongosync import mongo_utils
-from mongosync.common_handler import CommonHandler
 from mongosync.config import MongoConfig
 from mongosync.logger import Logger
 
 log = Logger.get()
 
-class MongoHandler(CommonHandler):
+
+class MongoHandler(object):
     def __init__(self, conf):
         if not isinstance(conf, MongoConfig):
             raise Exception('expect MongoConfig')
@@ -78,7 +78,7 @@ class MongoHandler(CommonHandler):
         """
         while True:
             try:
-                r = self._mc[dbname][collname].bulk_write(reqs,
+                self._mc[dbname][collname].bulk_write(reqs,
                                                       ordered=True,
                                                       bypass_document_validation=False)
                 return
@@ -88,7 +88,7 @@ class MongoHandler(CommonHandler):
             except Exception as e:
                 log.error('bulk write failed: %s' % e)
                 self.locate_bulk_write_error(dbname, collname, reqs)
-                # if bulk write failed, 
+                # if bulk write failed,
                 # generally it's an odd oplog that program cannot process
                 # so abort it and bugfix
                 sys.exit(1)
@@ -112,7 +112,7 @@ class MongoHandler(CommonHandler):
         """ Return a tailable curosr of local.oplog.rs from the specified optime.
         """
         # set codec options to guarantee the order of keys in command
-        coll = self._mc['local'].get_collection('oplog.rs', 
+        coll = self._mc['local'].get_collection('oplog.rs',
                                                 codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
         cursor = coll.find({'ts': {'$gte': start_optime}},
                            cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT,

@@ -27,13 +27,13 @@ class EsSyncer(CommonSyncer):
 
         if not isinstance(self._conf.src_conf, MongoConfig):
             raise Exception('invalid src config type')
-        self._src = MongoHanler(self._conf.src_conf)
+        self._src = MongoHandler(self._conf.src_conf)
         if not self._src.connect():
             raise Exception('connect to mongodb(src) failed: %s' % self._conf.src_hostportstr)
 
         if not isinstance(self._conf.dst_conf, EsConfig):
             raise Exception('invalid dst config type')
-        self._dst = Es(self._conf.dst_conf)
+        self._dst = EsHandler(self._conf.dst_conf)
         if not self._dst.connect():
             raise Exception('connect to elasticsearch(dst) failed: %s' % self._conf.dst_hostportstr)
 
@@ -56,12 +56,12 @@ class EsSyncer(CommonSyncer):
             self._dst.client().indices.create(index=idxname)
         self._sync_collections(dbname)
 
-    def _sync_collection(self, dbname, collname):
+    def _sync_collection(self, namespace_tuple):
         """ Sync a collection until success.
         """
-        src_dbname, src_collname = dbname, collname
-        idxname, typename = self._conf.db_coll_mapping(dbname, collname)
-        fields = self._conf.fieldmap.get(gen_namespace(dbname, collname))
+        src_dbname, src_collname = namespace_tuple[0], namespace_tuple[1]
+        idxname, typename = self._conf.db_coll_mapping(src_dbname, src_collname)
+        fields = self._conf.fieldmap.get(gen_namespace(src_dbname, src_collname))
 
         while True:
             try:
@@ -124,7 +124,7 @@ class EsSyncer(CommonSyncer):
             except pymongo.errors.AutoReconnect:
                 self._src.reconnect()
 
-    def _sync_oplog(self, oplog_start):
+    def _replay_oplog(self, oplog_start):
         """ Replay oplog.
         """
         self._last_bulk_optime = oplog_start
