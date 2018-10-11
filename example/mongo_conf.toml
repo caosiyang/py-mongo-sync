@@ -1,0 +1,36 @@
+# source config
+[src]
+hosts = "127.0.0.1:27017" # hostportstr of a member of replica set
+authdb = "admin"
+username = "yourusername"
+password = "yourpassword"
+
+# destination config
+[dst]
+hosts = "127.0.0.1:27018" # hostportstr of standalone, mongos or a member of replica set
+authdb = "admin"
+username = "yourusername"
+password = "yourpassword"
+
+# sync config
+[sync]
+# dbs specifies databases to sync
+# colls specifies collections to sync
+# if not set dbs, sync all collections
+dbs =  [
+    # sync a database (test0)
+    { db = "test0" },
+
+    # sync collections (test1.coll0, test1.coll1)
+    { db = "test1", colls = [ "coll0", "coll1" ] },
+
+    # sync a database and rename (test2 => test22)
+    { db = "test2", rename_db = "test22" },
+
+    # sync collections and rename (test3.coll2 => test33.coll2, test3.coll3 => test33.coll3)
+    { db = "test3", rename_db = "test33", colls = [ "coll2", "coll3" ] }
+]
+
+# log config
+[log]
+filepath = "sync.log" # write to stdout if empty or not set

@@ -4,7 +4,7 @@ from mongosync.data_filter import DataFilter
 
 
 class MongoConfig(object):
-    def __init__(self, hosts, authdb='', username='', password=''):
+    def __init__(self, hosts, authdb, username, password):
         self.hosts = hosts
         self.authdb = authdb
         self.username = username

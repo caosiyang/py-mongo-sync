@@ -23,6 +23,7 @@ if __name__ == '__main__':
     conf = CommandOptions.parse()
     Logger.init(conf.logfilepath)
     conf.info(log)
+    conf.info() # stdout
 
     if isinstance(conf.dst_conf, MongoConfig):
         syncer = MongoSyncer(conf)

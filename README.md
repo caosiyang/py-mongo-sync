@@ -5,7 +5,7 @@ An oplog based realtime sync tool written in Python that could sync data from Mo
 
 ## Features
 
-- full sync (including data and indexes) and oplog based incremental sync
+- initial sync and oplog based incremental sync
 - sync the specified databases
 - sync the specified collections
 - sync the sepcified fileds in collections to Elasticsearch
@@ -89,7 +89,6 @@ optional arguments:
 ## Configurations
 
 Use [TOML](https://github.com/toml-lang/toml) as configuration file format.
-Refer to [conf_example.toml](example/conf_example.toml).
 
 ### src
 Source config items.
@@ -102,16 +101,15 @@ Source config items.
 ### dst
 Destination config items.
 
-- dst.type - Destination type, either 'mongo' or 'es'
+- MongoDB refer to [mongo_conf.toml](example/mongo_conf.toml)
+    - dst.mongo.hosts
+    - dst.mongo.authdb
+    - dst.mongo.username
+    - dst.mongo.password
 
-- dst.mongo
-    - dst.mongo.hosts - MongoDB hostportstr
-    - dst.mongo.authdb - MongoDB authentication database
-    - dst.mongo.username - MongoDB username
-    - dst.mongo.password - MongoDB password
-
-- dst.es
-    - dst.es.hosts - Elasticsearch hosts
+- Elasticsearch refer to [es_conf.toml](example/es_conf.toml)
+    - dst.type
+    - dst.hosts
 
 ### sync
 Custom sync options.
@@ -128,18 +126,4 @@ Custom sync options.
 `fileds` in `sync.dbs.colls` element specifies the fields of current collection to sync.
 
 ### log
-
 - log.filepath - log file path, write to stdout if empty or not set
-
-
-##  Release Notes
-
-- v1.0.0
-    - sync data between MongoDB
-    - support TokuMX as source
-
-- v2.0.0
-    - support sync data from MongoDB to Elasticsearch
-    - never support TokuMX as source
-    - 'check' tool is inavailable now (TODO)
-

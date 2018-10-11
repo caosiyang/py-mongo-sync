@@ -1,0 +1,48 @@
+# source config
+[src]
+hosts = "127.0.0.1:27017" # hostportstr of a member of replica set
+authdb = "admin"
+username = "yourusername"
+password = "yourpassword"
+
+# destination config
+[dst]
+type = "es"
+hosts = [
+    "your_es_host1:9200",
+    "your_es_host2:9200",
+    "your_es_host3:9200",
+    "your_es_host4:9200",
+    "your_es_host5:9200"
+]
+
+# sync config
+[sync]
+
+# sync database "test0"
+[[sync.dbs]]
+db = "test0"
+
+# sync database (test1 => test11)
+[[sync.dbs]]
+db = "test1"
+rename_db = "test11"
+
+# sync collections (test2.coll0 => test22.coll0, test2.coll1 => test22.coll1)
+[[sync.dbs]]
+db = "test2"
+rename_db = "test22"
+colls = [ "coll0", "coll1" ]
+
+# sync collections with specfied fields
+[[sync.dbs]]
+db = "test3"
+rename_db = "test33"
+colls = [
+    { coll = "coll2", fields = [ "f0", "f1" ] },
+    { coll = "coll3", fields = [ "f2", "f3" ] }
+]
+
+# log config
+[log]
+filepath = "sync.log" # write to stdout if empty or not set
