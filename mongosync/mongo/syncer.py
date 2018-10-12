@@ -1,4 +1,5 @@
 import time
+import gevent
 import pymongo
 from mongosync import mongo_utils
 from mongosync.logger import Logger
@@ -6,11 +7,6 @@ from mongosync.config import MongoConfig
 from mongosync.common_syncer import CommonSyncer, Progress
 from mongosync.mongo.handler import MongoHandler
 from mongosync.multi_oplog_replayer import MultiOplogReplayer
-
-try:
-    import gevent
-except ImportError:
-    pass
 
 log = Logger.get()
 
@@ -31,10 +27,7 @@ class MongoSyncer(CommonSyncer):
         self._dst = MongoHandler(self._conf.dst_conf)
         if not self._dst.connect():
             raise Exception('connect to mongodb(dst) failed: %s' % self._conf.dst_hostportstr)
-        self._multi_oplog_replayer = None
-        engine = self._dst.client()['admin'].command('serverStatus')['storageEngine']['name']
-        if self._conf.asyncio and engine.lower() == 'wiredtiger':
-            self._multi_oplog_replayer = MultiOplogReplayer(self._dst, 10)
+        self._multi_oplog_replayer = MultiOplogReplayer(self._dst, 10)
 
     def _initial_sync(self):
         """ Initial sync to MongoDB.
@@ -114,34 +107,25 @@ class MongoSyncer(CommonSyncer):
                 groups_max = 10
 
                 for doc in cursor:
-                    if self._conf.asyncio:
-                        reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
-                        if len(reqs) == reqs_max:
-                            groups.append(reqs)
-                            reqs = []
-                        if len(groups) == groups_max:
-                            threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
-                            gevent.joinall(threads)
-                            groups = []
-                    else:
-                        reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
-                        if len(reqs) == reqs_max:
-                            self._dst.bulk_write(dst_dbname, dst_collname, reqs)
-                            reqs = []
+                    reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
+                    if len(reqs) == reqs_max:
+                        groups.append(reqs)
+                        reqs = []
+                    if len(groups) == groups_max:
+                        threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
+                        gevent.joinall(threads)
+                        groups = []
+
                     n += 1
                     if n % 10000 == 0:
                         self._progress_queue.put(Progress(src_ns, n, count, False, start_time))
                         log.info('\t%s\t%d/%d\t(%.1f%%)' % (src_ns, n, count, float(n)/count*100))
 
-                if self._conf.asyncio:
-                    if len(groups) > 0:
-                        threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
-                        gevent.joinall(threads)
-                    if len(reqs) > 0:
-                        self._dst.bulk_write(dst_dbname, dst_collname, reqs)
-                else:
-                    if len(reqs) > 0:
-                        self._dst.bulk_write(dst_dbname, dst_collname, reqs)
+                if len(groups) > 0:
+                    threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
+                    gevent.joinall(threads)
+                if len(reqs) > 0:
+                    self._dst.bulk_write(dst_dbname, dst_collname, reqs)
 
                 self._progress_queue.put(Progress(src_ns, n, count, True, start_time))
                 log.info("[ OK ] sync collection\t%s\t%d/%d\t(%.1f%%)" % (

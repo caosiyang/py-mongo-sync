@@ -10,11 +10,6 @@ from mongosync.logger import Logger
 from mongosync.mongo_utils import get_optime, gen_namespace
 from mongosync.optime_logger import OptimeLogger
 
-try:
-    import gevent
-except ImportError:
-    pass
-
 log = Logger.get()
 
 
@@ -41,13 +36,14 @@ class ProgressLogger(threading.Thread):
             self.map[p.ns] = p
 
             if p.done:
+                n_colls_done += 1
+                del self.map[p.ns]
                 time_used = time.time() - p.start_time
                 sys.stdout.write('\r\33[K')
-                sys.stdout.write('\r[\033[32m OK \033[0m] %s\t%d/%d\t%.1fs\n' % (p.ns, p.curr, p.total, time_used))
+                sys.stdout.write('\r[\033[32m OK \033[0m]\t[%d/%d]\t%s\t%d/%d\t%.1fs\n' % (n_colls_done, self.n_colls, p.ns, p.curr, p.total, time_used))
                 sys.stdout.flush()
 
-                del self.map[p.ns]
-                n_colls_done += 1
+            continue
 
             s = ''
             for ns, p in self.map.iteritems():
@@ -161,7 +157,7 @@ class CommonSyncer(object):
         t = ProgressLogger(self._progress_queue, len(colls))
         t.start()
 
-        pool = gevent.pool.Pool(4)
+        pool = gevent.pool.Pool(8)
         for res in pool.imap(self._sync_collection, colls):
             if res is not None:
                 sys.exit(1)

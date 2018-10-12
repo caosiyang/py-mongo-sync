@@ -1,4 +1,5 @@
 import time
+import gevent
 import pymongo
 import bson
 import elasticsearch
@@ -10,11 +11,6 @@ from mongosync.doc_utils import gen_doc_with_fields, doc_flat_to_nested, merge_d
 from mongosync.mongo_utils import parse_namespace, gen_namespace
 from mongosync.mongo.handler import MongoHandler
 from mongosync.es.handler import EsHandler
-
-try:
-    import gevent
-except ImportError:
-    pass
 
 log = Logger.get()
 
@@ -82,42 +78,28 @@ class EsSyncer(CommonSyncer):
                 groups_max = 10
 
                 for doc in cursor:
-                    if self._conf.asyncio:
-                        id = str(doc['_id'])
-                        del doc['_id']
-                        source = gen_doc_with_fields(doc, fields) if fields else doc
-                        if source:
-                            actions.append({'_op_type': 'index', '_index': idxname, '_type': typename, '_id': id, '_source': source})
-                        if len(actions) == actions_max:
-                            groups.append(actions)
-                            actions = []
-                        if len(groups) == groups_max:
-                            threads = [gevent.spawn(self._dst.bulk_write, groups[i]) for i in xrange(groups_max)]
-                            gevent.joinall(threads)
-                            groups = []
-                    else:
-                        id = str(doc['_id'])
-                        del doc['_id']
-                        source = gen_doc_with_fields(doc, fields) if fields else doc
-                        if source:
-                            actions.append({'_op_type': 'index', '_index': idxname, '_type': typename, '_id': id, '_source': source})
-                        if len(actions) == actions_max:
-                            elasticsearch.helpers.bulk(client=self._dst.client(), actions=actions)
-                            actions = []
+                    id = str(doc['_id'])
+                    del doc['_id']
+                    source = gen_doc_with_fields(doc, fields) if fields else doc
+                    if source:
+                        actions.append({'_op_type': 'index', '_index': idxname, '_type': typename, '_id': id, '_source': source})
+                    if len(actions) == actions_max:
+                        groups.append(actions)
+                        actions = []
+                    if len(groups) == groups_max:
+                        threads = [gevent.spawn(self._dst.bulk_write, groups[i]) for i in xrange(groups_max)]
+                        gevent.joinall(threads)
+                        groups = []
 
                     n += 1
                     if n % 1000 == 0:
                         log.info('    %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
 
-                if self._conf.asyncio:
-                    if len(groups) > 0:
-                        threads = [gevent.spawn(self._dst.bulk_write, groups[i]) for i in xrange(len(groups))]
-                        gevent.joinall(threads)
-                    if len(actions) > 0:
-                        elasticsearch.helpers.bulk(client=self._dst.client(), actions=actions)
-                else:
-                    if len(actions) > 0:
-                        elasticsearch.helpers.bulk(client=self._dst.client(), actions=actions)
+                if len(groups) > 0:
+                    threads = [gevent.spawn(self._dst.bulk_write, groups[i]) for i in xrange(len(groups))]
+                    gevent.joinall(threads)
+                if len(actions) > 0:
+                    elasticsearch.helpers.bulk(client=self._dst.client(), actions=actions)
 
                 log.info('    %s.%s %d/%d (%.2f%%)' % (src_dbname, src_collname, n, count, float(n)/count*100))
                 return
