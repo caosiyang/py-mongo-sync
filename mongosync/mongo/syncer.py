@@ -1,10 +1,11 @@
 import time
+import multiprocessing
 import gevent
 import pymongo
 from mongosync import mongo_utils
 from mongosync.logger import Logger
 from mongosync.config import MongoConfig
-from mongosync.common_syncer import CommonSyncer, Progress
+from mongosync.common_syncer import CommonSyncer
 from mongosync.mongo.handler import MongoHandler
 from mongosync.multi_oplog_replayer import MultiOplogReplayer
 
@@ -18,28 +19,18 @@ class MongoSyncer(CommonSyncer):
         CommonSyncer.__init__(self, conf)
 
         if not isinstance(self._conf.src_conf, MongoConfig):
-            raise Exception('invalid src config type')
+            raise RuntimeError('invalid src config type')
         self._src = MongoHandler(self._conf.src_conf)
         if not self._src.connect():
-            raise Exception('connect to mongodb(src) failed: %s' % self._conf.src_hostportstr)
+            raise RuntimeError('connect to mongodb(src) failed: %s' % self._conf.src_hostportstr)
         if not isinstance(self._conf.dst_conf, MongoConfig):
-            raise Exception('invalid dst config type')
+            raise RuntimeError('invalid dst config type')
         self._dst = MongoHandler(self._conf.dst_conf)
         if not self._dst.connect():
-            raise Exception('connect to mongodb(dst) failed: %s' % self._conf.dst_hostportstr)
+            raise RuntimeError('connect to mongodb(dst) failed: %s' % self._conf.dst_hostportstr)
         self._multi_oplog_replayer = MultiOplogReplayer(self._dst, 10)
 
-    def _initial_sync(self):
-        """ Initial sync to MongoDB.
-        """
-        # Q: Why create indexes first?
-        # A: Create indexes may failed if import the documents first.
-        #    For example, create an unique index without 'dropDups' option and duplicate key error occured.
-        #    Duplicate key document could be produced in initial sync.
-        self._sync_indexes()
-        CommonSyncer._initial_sync(self)
-
-    def _sync_indexes(self):
+    def _create_index(self, namespace_tuple):
         """ Create indexes.
         """
         def format(key_direction_list):
@@ -52,45 +43,40 @@ class MongoSyncer(CommonSyncer):
                 res.append((key, direction))
             return res
 
-        for dbname in self._src.client().database_names():
-            if dbname in self._ignore_dbs:
-                continue
-            if not self._conf.data_filter.valid_db(dbname):
-                continue
-            for collname in self._src.client()[dbname].collection_names(include_system_collections=False):
-                if collname in self._ignore_colls:
-                    continue
-                if not self._conf.data_filter.valid_index(dbname, collname):
-                    continue
-                dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
-                index_info = self._src.client()[dbname][collname].index_information()
-                for name, info in index_info.iteritems():
-                    keys = info['key']
-                    options = {}
-                    options['name'] = name
-                    if 'unique' in info:
-                        options['unique'] = info['unique']
-                    if 'sparse' in info:
-                        options['sparse'] = info['sparse']
-                    if 'expireAfterSeconds' in info:
-                        options['expireAfterSeconds'] = info['expireAfterSeconds']
-                    if 'partialFilterExpression' in info:
-                        options['partialFilterExpression'] = info['partialFilterExpression']
-                    if 'dropDups' in info:
-                        options['dropDups'] = info['dropDups']
-                    # create indexes before import documents, so not need 'background' option
-                    # if 'background' in info:
-                    #     options['background'] = info['background']
-                    self._dst.create_index(dst_dbname, dst_collname, format(keys), **options)
+        dbname, collname = namespace_tuple
+        dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
+        index_info = self._src.client()[dbname][collname].index_information()
+        for name, info in index_info.iteritems():
+            keys = info['key']
+            options = {}
+            options['name'] = name
+            if 'unique' in info:
+                options['unique'] = info['unique']
+            if 'sparse' in info:
+                options['sparse'] = info['sparse']
+            if 'expireAfterSeconds' in info:
+                options['expireAfterSeconds'] = info['expireAfterSeconds']
+            if 'partialFilterExpression' in info:
+                options['partialFilterExpression'] = info['partialFilterExpression']
+            if 'dropDups' in info:
+                options['dropDups'] = info['dropDups']
+            # create indexes before import documents, so not need 'background' option
+            # if 'background' in info:
+            #     options['background'] = info['background']
+            self._dst.create_index(dst_dbname, dst_collname, format(keys), **options)
 
     def _sync_collection(self, namespace_tuple):
         """ Sync a collection until success.
         """
-        src_dbname, src_collname = namespace_tuple[0], namespace_tuple[1]
+        # create indexes first
+        self._create_index(namespace_tuple)
+
+        src_dbname, src_collname = namespace_tuple
         dst_dbname, dst_collname = self._conf.db_coll_mapping(src_dbname, src_collname)
         src_ns = '%s.%s' % (src_dbname, src_collname)
-        dst_ns = '%s.%s' % (dst_dbname, dst_collname)
-        start_time = time.time()
+
+        total = self._src.client()[src_dbname][src_collname].count()
+        self._progress_logger.register(src_ns, total)
 
         while True:
             try:
@@ -98,8 +84,108 @@ class MongoSyncer(CommonSyncer):
                                                                            cursor_type=pymongo.cursor.CursorType.EXHAUST,
                                                                            no_cursor_timeout=True,
                                                                            modifiers={'$snapshot': True})
-                count = cursor.count()
 
+                reqs = []
+                reqs_max = 100
+                groups = []
+                groups_max = 10
+                n = 0
+
+                for doc in cursor:
+                    reqs.append(pymongo.ReplaceOne({'_id': doc['_id']}, doc, upsert=True))
+                    if len(reqs) == reqs_max:
+                        groups.append(reqs)
+                        reqs = []
+                    if len(groups) == groups_max:
+                        threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
+                        gevent.joinall(threads)
+                        groups = []
+
+                    n += 1
+                    if n % 10000 == 0:
+                        self._progress_logger.add(src_ns, n)
+                        n = 0
+
+                if len(groups) > 0:
+                    threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
+                    gevent.joinall(threads)
+                if len(reqs) > 0:
+                    self._dst.bulk_write(dst_dbname, dst_collname, reqs)
+
+                self._progress_logger.add(src_ns, n, done=True)
+                return
+            except pymongo.errors.AutoReconnect:
+                self._src.reconnect()
+
+    def _sync_large_collection(self, namespace_tuple, split_points):
+        """ Sync large collection.
+        """
+        # create indexes first
+        self._create_index(namespace_tuple)
+
+        dbname, collname = namespace_tuple
+        ns = '.'.join(namespace_tuple)
+
+        log.info('pending to sync %s with %d processes' % (ns, len(split_points) + 1))
+
+        coll = self._src.client()[dbname][collname]
+        total = coll.count()
+        self._progress_logger.register(ns, total)
+
+        prog_q = multiprocessing.Queue()
+        res_q = multiprocessing.Queue()
+
+        proc_logging = multiprocessing.Process(target=logging_progress, args=(ns, total, prog_q))
+        proc_logging.start()
+
+        queries = []
+        lower_bound = None
+        for point in split_points:
+            if lower_bound is None:
+                queries.append({'_id': {'$lt': point}})
+            else:
+                queries.append({'_id': {'$gte': lower_bound, '$lt': point}})
+            lower_bound = point
+        queries.append({'_id': {'$gte': lower_bound}})
+
+        procs = []
+        for query in queries:
+            p = multiprocessing.Process(target=self._sync_collection_with_query, args=(namespace_tuple, query, prog_q, res_q))
+            p.start()
+            procs.append(p)
+            log.info('start process %s with query %s' % (p.name, query))
+
+        for p in procs:
+            p.join()
+
+        n_docs = 0
+        for p in procs:
+            n_docs += res_q.get()
+        self._progress_logger.add(ns, n_docs, done=True)
+
+        prog_q.put(True)
+        prog_q.close()
+        prog_q.join_thread()
+        proc_logging.join()
+
+    def _sync_collection_with_query(self, namespace_tuple, query, prog_q, res_q):
+        """ Sync collection with query.
+        """
+        self._src.reconnect()
+        self._dst.reconnect()
+
+        src_dbname, src_collname = namespace_tuple
+        dst_dbname, dst_collname = self._conf.db_coll_mapping(src_dbname, src_collname)
+
+        while True:
+            try:
+                cursor = self._src.client()[src_dbname][src_collname].find(filter=query,
+                                                                           cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                                                                           no_cursor_timeout=True,
+                                                                           # snapshot cause blocking, maybe bug
+                                                                           # modifiers={'$snapshot': True}
+                                                                           )
+                total = 0
                 n = 0
                 reqs = []
                 reqs_max = 100
@@ -117,9 +203,10 @@ class MongoSyncer(CommonSyncer):
                         groups = []
 
                     n += 1
+                    total += 1
                     if n % 10000 == 0:
-                        self._progress_queue.put(Progress(src_ns, n, count, False, start_time))
-                        log.info('\t%s\t%d/%d\t(%.1f%%)' % (src_ns, n, count, float(n)/count*100))
+                        prog_q.put(n)
+                        n = 0
 
                 if len(groups) > 0:
                     threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
@@ -127,12 +214,14 @@ class MongoSyncer(CommonSyncer):
                 if len(reqs) > 0:
                     self._dst.bulk_write(dst_dbname, dst_collname, reqs)
 
-                self._progress_queue.put(Progress(src_ns, n, count, True, start_time))
-                log.info("[ OK ] sync collection\t%s\t%d/%d\t(%.1f%%)" % (
-                    src_ns if src_ns == dst_ns else '%s => %s' % (src_ns, dst_ns),
-                    n,
-                    count,
-                    float(n)/count*100 if count > 0 else float(n+1)/(count+1)*100))
+                if n > 0:
+                    prog_q.put(n)
+                res_q.put(total)
+
+                prog_q.close()
+                prog_q.join_thread()
+                res_q.close()
+                res_q.join_thread()
                 return
             except pymongo.errors.AutoReconnect:
                 self._src.reconnect()
@@ -230,3 +319,18 @@ class MongoSyncer(CommonSyncer):
                 log.error(e)
                 log.error('%s not found, terminate' % self._last_optime)
                 return
+
+
+def logging_progress(ns, total, prog_q):
+    curr = 0
+    while True:
+        m = prog_q.get()
+        if isinstance(m, bool):
+            return
+        curr += m
+        s = '\t%s\t%d/%d\t[%.2f%%]' % (
+                ns,
+                curr,
+                total,
+                float(curr)/total*100 if total > 0 else float(curr+1)/(total+1)*100)
+        log.info(s)

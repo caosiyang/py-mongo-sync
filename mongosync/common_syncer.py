@@ -2,56 +2,14 @@ import sys
 import time
 import datetime
 import exceptions
-import Queue
-import threading
 import gevent
 from mongosync.config import Config
 from mongosync.logger import Logger
-from mongosync.mongo_utils import get_optime, gen_namespace
+from mongosync.mongo_utils import get_optime
 from mongosync.optime_logger import OptimeLogger
+from mongosync.progress_logger import LoggerThread
 
 log = Logger.get()
-
-
-class Progress(object):
-    def __init__(self, ns, curr, total, done, start_time):
-        self.ns = ns
-        self.curr = curr
-        self.total = total
-        self.done = done
-        self.start_time = start_time
-
-
-class ProgressLogger(threading.Thread):
-    def __init__(self, queue, n_colls, **kwargs):
-        self.queue = queue
-        self.n_colls = n_colls
-        self.map = {}
-        super(ProgressLogger, self).__init__(**kwargs)
-
-    def run(self):
-        n_colls_done = 0
-        while n_colls_done < self.n_colls:
-            p = self.queue.get()
-            self.map[p.ns] = p
-
-            if p.done:
-                n_colls_done += 1
-                del self.map[p.ns]
-                time_used = time.time() - p.start_time
-                sys.stdout.write('\r\33[K')
-                sys.stdout.write('\r[\033[32m OK \033[0m]\t[%d/%d]\t%s\t%d/%d\t%.1fs\n' % (n_colls_done, self.n_colls, p.ns, p.curr, p.total, time_used))
-                sys.stdout.flush()
-
-            continue
-
-            s = ''
-            for ns, p in self.map.iteritems():
-                s += '|| %s  %d/%d  %.1f%% ' % (ns, p.curr, p.total, float(p.curr)/p.total*100)
-            if len(s) > 0:
-                s += '||'
-                sys.stdout.write('\r%s' % s)
-                sys.stdout.flush()
 
 
 class CommonSyncer(object):
@@ -61,11 +19,12 @@ class CommonSyncer(object):
         - __init__
         - _initial_sync
         - _sync_collection
+        - _sync_large_collection
         - _replay_oplog
     """
     def __init__(self, conf):
         if not isinstance(conf, Config):
-            raise Exception('invalid config type')
+            raise RuntimeError('invalid config type')
         self._conf = conf
 
         self._ignore_dbs = ['admin', 'local']
@@ -82,7 +41,9 @@ class CommonSyncer(object):
         self._log_interval = 2  # default 2s
         self._last_logtime = time.time()  # use in oplog replay
 
-        self._progress_queue = Queue.Queue()
+        # for large collections
+        self._n_workers = 8  # multi-process
+        self._large_coll_docs = 1000000  # 100w
 
     @property
     def from_to(self):
@@ -134,45 +95,126 @@ class CommonSyncer(object):
                 log.info('first %s' % oplog_start)
             self._replay_oplog(oplog_start)
 
-    def _initial_sync(self):
-        """ Initial sync.
+    def _collect_colls(self):
+        """ Collect collections to sync.
         """
         colls = []
         for dbname in self._src.client().database_names():
             if dbname in self._ignore_dbs:
-                log.info("skip database '%s'" % dbname)
                 continue
             if not self._conf.data_filter.valid_db(dbname):
-                log.info("skip database '%s'" % dbname)
                 continue
             for collname in self._src.client()[dbname].collection_names(include_system_collections=False):
                 if collname in self._ignore_colls:
-                    log.info("skip collection '%s'" % gen_namespace(dbname, collname))
                     continue
                 if not self._conf.data_filter.valid_coll(dbname, collname):
-                    log.info("skip collection '%s'" % gen_namespace(dbname, collname))
                     continue
                 colls.append((dbname, collname))
+        return colls
 
-        t = ProgressLogger(self._progress_queue, len(colls))
-        t.start()
+    def _split_coll(self, namespace_tuple, n_partitions):
+        """ Split a collection into n partitions.
+
+        Return a list of split points.
+
+        splitPointCount = partitionCount - 1
+        splitPointCount = keyTotalCount / (keyCount + 1)
+        keyCount = maxChunkSize / (2 * avgObjSize)
+        =>
+        maxChunkSize = (keyTotalCount / (partionCount - 1) - 1) * 2 * avgObjSize
+
+        Note: maxChunkObjects is default 250000.
+        """
+        if n_partitions <= 1:
+            raise RuntimeError('n_partitions need greater than 1, but %s' % n_partitions)
+
+        dbname, collname = namespace_tuple
+        ns = '.'.join(namespace_tuple)
+        db = self._src.client()[dbname]
+        collstats = db.command('collstats', collname)
+
+        if 'avgObjSize' not in collstats:  # empty collection
+            return []
+
+        n_points = n_partitions - 1
+        max_chunk_size = ((collstats['count'] / (n_partitions - 1) - 1) * 2 * collstats['avgObjSize']) / 1024 / 1024
+
+        if max_chunk_size <= 0:
+            return []
+
+        res = db.command('splitVector', ns, keyPattern={'_id': 1}, maxSplitPoints=n_points, maxChunkSize=max_chunk_size, maxChunkObjects=collstats['count'])
+
+        if res['ok'] != 1:
+            return []
+        else:
+            return [doc['_id'] for doc in res['splitKeys']]
+
+    def _initial_sync(self):
+        """ Initial sync.
+        """
+        def classify(ns_tuple, large_colls, small_colls):
+            """ Find out large and small collections.
+            """
+            if self._is_large_collection(ns_tuple):
+                points = self._split_coll(ns_tuple, self._n_workers)
+                if points:
+                    large_colls.append((ns_tuple, points))
+                else:
+                    small_colls.append(ns_tuple)
+            else:
+                small_colls.append(ns_tuple)
+
+        large_colls = []
+        small_colls = []
 
         pool = gevent.pool.Pool(8)
-        for res in pool.imap(self._sync_collection, colls):
+        colls = self._collect_colls()
+        for ns in colls:
+            dbname, collname = ns
+            log.info('%d\t%s.%s' % (self._src.client()[dbname][collname].count(), dbname, collname))
+            pool.spawn(classify, ns, large_colls, small_colls)
+        pool.join()
+
+        if len(large_colls) + len(small_colls) != len(colls):
+            raise RuntimeError('classify collections error')
+
+        log.info('large collections: %s' % ['.'.join(ns) for ns, points in large_colls])
+        log.info('small collections: %s' % ['.'.join(ns) for ns in small_colls])
+
+        # create progress logger
+        self._progress_logger = LoggerThread(len(colls))
+        self._progress_logger.start()
+
+        # small collections first
+        pool = gevent.pool.Pool(8)
+        for res in pool.imap(self._sync_collection, small_colls):
             if res is not None:
                 sys.exit(1)
 
-        t.join()
+        # then large collections
+        for ns, points in large_colls:
+            self._sync_large_collection(ns, points)
 
-    def _sync_collection(self, dbname, collname):
+    def _sync_collection(self, namespace_tuple):
         """ Sync a collection until success.
         """
-        raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._sync_collection.__name__))
+        raise NotImplementedError('you should implement %s.%s' % (self.__class__.__name__, self._sync_collection.__name__))
+
+    def _is_large_collection(self, namespace_tuple):
+        """ Check if large collection or not.
+        """
+        dbname, collname = namespace_tuple
+        return True if self._src.client()[dbname][collname].count() > self._large_coll_docs else False
+
+    def _sync_large_collection(self, namespace_tuple):
+        """ Sync large collection until success.
+        """
+        raise NotImplementedError('you should implement %s.%s' % (self.__class__.__name__, self._sync_large_collection.__name__))
 
     def _replay_oplog(self, oplog_start):
         """ Replay oplog.
         """
-        raise Exception('you should implement %s.%s' % (self.__class__.__name__, self._replay_oplog.__name__))
+        raise NotImplementedError('you should implement %s.%s' % (self.__class__.__name__, self._replay_oplog.__name__))
 
     def _log_progress(self, tag=''):
         """ Print progress periodically.

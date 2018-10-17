@@ -43,7 +43,6 @@ class MongoHandler(object):
         """
         while True:
             try:
-                log.info('try to reconnect %s' % self._conf.hosts)
                 self.close()
                 self.connect()
                 self.client().admin.command('ismaster')
