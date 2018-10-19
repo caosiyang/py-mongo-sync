@@ -98,14 +98,24 @@ class MongoHandler(object):
         for req in reqs:
             while True:
                 try:
-                    self._mc[dbname][collname].bulk_write([req])
+                    if isinstance(req, pymongo.ReplaceOne):
+                        self._mc[dbname][collname].replace_one(req._filter, req._doc, upsert=req._upsert)
+                    elif isinstance(req, pymongo.InsertOne):
+                        self._mc[dbname][collname].insert_one(req._doc)
+                    elif isinstance(req, pymongo.UpdateOne):
+                        self._mc[dbname][collname].update_one(req._filter, req._doc, upsert=req._upsert)
+                    elif isinstance(req, pymongo.DeleteOne):
+                        self._mc[dbname][collname].delete_one(req._filter)
+                    else:
+                        log.error('unknown operation type: %s' % req)
+                        sys.exit(1)
                     break
                 except pymongo.errors.AutoReconnect as e:
                     log.error('%s' % e)
                     self.reconnect()
                 except Exception as e:
                     log.error('%s when excuting %s on %s.%s' % (e, req, dbname, collname))
-                    break
+                    sys.exit(1)
 
     def tail_oplog(self, start_optime=None, await_time_ms=None):
         """ Return a tailable curosr of local.oplog.rs from the specified optime.
