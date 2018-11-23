@@ -132,7 +132,7 @@ class MongoHandler(object):
         #     cursor.max_await_time_ms(1000)
         return cursor
 
-    def replay_oplog(self, oplog):
+    def apply_oplog(self, oplog):
         """ Replay oplog.
         """
         dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
@@ -164,13 +164,10 @@ class MongoHandler(object):
                 else:
                     log.error('invaid op: %s' % oplog)
                 return
-            except pymongo.errors.DuplicateKeyError as e:
-                # TODO
-                # through unique index, delete old, insert new
-                log.error('%s: %s' % (e, oplog))
-                return
             except pymongo.errors.AutoReconnect as e:
                 self.reconnect()
+            except pymongo.errors.DuplicateKeyError as e:
+                raise e  # handle error in syncer
             except pymongo.errors.WriteError as e:
                 log.error('%s' % e)
 

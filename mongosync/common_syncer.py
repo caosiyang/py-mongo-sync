@@ -12,6 +12,13 @@ from mongosync.progress_logger import LoggerThread
 log = Logger.get()
 
 
+class Stage(object):
+    STOPPED = 0
+    INITIAL_SYNC = 1
+    POST_INITIAL_SYNC = 2
+    OPLOG_SYNC = 3
+
+
 class CommonSyncer(object):
     """ Common database synchronizer.
 
@@ -35,7 +42,7 @@ class CommonSyncer(object):
         else:
             self._optime_logger = None
         self._optime_log_interval = 10  # default 10s
-        self._last_optime = None  # optime of the last oplog has been replayed
+        self._last_optime = None  # optime of the last oplog was applied
         self._last_optime_logtime = time.time()
 
         self._log_interval = 2  # default 2s
@@ -44,6 +51,11 @@ class CommonSyncer(object):
         # for large collections
         self._n_workers = 8  # multi-process
         self._large_coll_docs = 1000000  # 100w
+
+        self._initial_sync_start_optime = None
+        self._initial_sync_end_optime = None
+
+        self._stage = Stage.STOPPED
 
     @property
     def from_to(self):
@@ -74,26 +86,28 @@ class CommonSyncer(object):
         """
         if self._conf.start_optime:
             log.info("locating oplog, it will take a while")
-            oplog_start = self._conf.start_optime
-            doc = self._src.client()['local']['oplog.rs'].find_one({'ts': {'$gte': oplog_start}})
+            doc = self._src.client()['local']['oplog.rs'].find_one({'ts': {'$gte': self._conf.start_optime}})
             if not doc:
                 log.error('oplog is stale')
                 return
-            oplog_start = doc['ts']
-            log.info('start timestamp is %s actually' % oplog_start)
-            self._last_optime = oplog_start
-            self._replay_oplog(oplog_start)
+            start_optime = doc['ts']
+            log.info('start timestamp is %s actually' % start_optime)
+            self._stage = Stage.OPLOG_SYNC
+            self._replay_oplog(start_optime)
         else:
-            oplog_start = get_optime(self._src.client())
-            if not oplog_start:
-                log.error('get oplog_start failed, terminate')
-                sys.exit(1)
-            self._last_optime = oplog_start
+            # initial sync
+            self._initial_sync_start_optime = get_optime(self._src.client())
+            self._stage = Stage.INITIAL_SYNC
+
             self._initial_sync()
+
+            self._stage = Stage.POST_INITIAL_SYNC
+            self._initial_sync_end_optime = get_optime(self._src.client())
+
+            # oplog sync
             if self._optime_logger:
-                self._optime_logger.write(oplog_start)
-                log.info('first %s' % oplog_start)
-            self._replay_oplog(oplog_start)
+                self._optime_logger.write(self._initial_sync_start_optime)
+            self._replay_oplog(self._initial_sync_start_optime)
 
     def _collect_colls(self):
         """ Collect collections to sync.

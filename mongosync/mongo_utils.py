@@ -110,16 +110,17 @@ def get_optime(mc):
     """
     rs_status = mc['admin'].command({'replSetGetStatus': 1})
     members = rs_status.get('members')
-    if members:
-        for member in members:
-            role = member.get('stateStr')
-            if role == 'PRIMARY':
-                optime = member.get('optime')
-                if isinstance(optime, dict) and 'ts' in optime:  # for MongoDB v3.2
-                    return optime['ts']
-                else:
-                    return optime
-    return None
+    if not members:
+        raise Exception('no member in replica set')
+    for member in rs_status['members']:
+        role = member.get('stateStr')
+        if role == 'PRIMARY':
+            optime = member.get('optime')
+            if isinstance(optime, dict) and 'ts' in optime:  # for MongoDB v3.2
+                return optime['ts']
+            else:
+                return optime
+    raise Exception('no primary in replica set')
 
 
 def get_optime_tokumx(mc):

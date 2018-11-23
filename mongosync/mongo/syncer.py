@@ -5,7 +5,7 @@ import pymongo
 from mongosync import mongo_utils
 from mongosync.logger import Logger
 from mongosync.config import MongoConfig
-from mongosync.common_syncer import CommonSyncer
+from mongosync.common_syncer import CommonSyncer, Stage
 from mongosync.mongo.handler import MongoHandler
 from mongosync.multi_oplog_replayer import MultiOplogReplayer
 
@@ -107,7 +107,7 @@ class MongoSyncer(CommonSyncer):
                         groups.append(reqs)
                         reqs = []
                     if len(groups) == groups_max:
-                        threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
+                        threads = [gevent.spawn(self.bulk_write, self._dst.client(), dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
                         gevent.joinall(threads)
                         groups = []
 
@@ -117,10 +117,10 @@ class MongoSyncer(CommonSyncer):
                         n = 0
 
                 if len(groups) > 0:
-                    threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
+                    threads = [gevent.spawn(self.bulk_write, self._dst.client(), dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
                     gevent.joinall(threads)
                 if len(reqs) > 0:
-                    self._dst.bulk_write(dst_dbname, dst_collname, reqs)
+                    self.bulk_write(self._dst.client(), dst_dbname, dst_collname, reqs)
 
                 self._progress_logger.add(src_ns, n, done=True)
                 return
@@ -208,7 +208,7 @@ class MongoSyncer(CommonSyncer):
                         groups.append(reqs)
                         reqs = []
                     if len(groups) == groups_max:
-                        threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
+                        threads = [gevent.spawn(self.bulk_write, self._dst.client(), dst_dbname, dst_collname, groups[i]) for i in xrange(groups_max)]
                         gevent.joinall(threads)
                         groups = []
 
@@ -219,10 +219,10 @@ class MongoSyncer(CommonSyncer):
                         n = 0
 
                 if len(groups) > 0:
-                    threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
+                    threads = [gevent.spawn(self.bulk_write, self._dst.client(), dst_dbname, dst_collname, groups[i]) for i in xrange(len(groups))]
                     gevent.joinall(threads)
                 if len(reqs) > 0:
-                    self._dst.bulk_write(dst_dbname, dst_collname, reqs)
+                    self.bulk_write(dst_dbname, self._dst.client(), dst_collname, reqs)
 
                 if n > 0:
                     prog_q.put(n)
@@ -245,89 +245,146 @@ class MongoSyncer(CommonSyncer):
         n_skip = 0
 
         while True:
-            # try to get cursor until success
             try:
                 start_optime_valid = False
                 need_log = False
                 host, port = self._src.client().address
                 log.info('try to sync oplog from %s on %s:%d' % (self._last_optime, host, port))
                 cursor = self._src.tail_oplog(start_optime)
-
-                while True:
-                    try:
-                        if need_log:
-                            self._log_optime(self._last_optime)
-                            self._log_progress()
-                            need_log = False
-
-                        if not cursor.alive:
-                            log.error('cursor is dead')
-                            raise pymongo.errors.AutoReconnect
-
-                        oplog = cursor.next()
-                        n_total += 1
-
-                        # check start optime once
-                        if not start_optime_valid:
-                            if oplog['ts'] == self._last_optime:
-                                log.info('oplog is ok: %s' % self._last_optime)
-                                start_optime_valid = True
-                            else:
-                                log.error('oplog %s is stale, terminate' % self._last_optime)
-                                return
-
-                        if oplog['op'] == 'n':  # no-op
-                            self._last_optime = oplog['ts']
-                            need_log = True
-                            continue
-
-                        # validate oplog only for mongodb
-                        if not self._conf.data_filter.valid_oplog(oplog):
-                            n_skip += 1
-                            self._last_optime = oplog['ts']
-                            need_log = True
-                            continue
-
-                        dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
-                        dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
-                        if dst_dbname != dbname or dst_collname != collname:
-                            oplog['ns'] = '%s.%s' % (dst_dbname, dst_collname)
-
-                        if self._multi_oplog_replayer:
-                            if mongo_utils.is_command(oplog):
-                                self._multi_oplog_replayer.apply()
-                                self._multi_oplog_replayer.clear()
-                                self._dst.replay_oplog(oplog)
-                                self._last_optime = oplog['ts']
-                                need_log = True
-                            else:
-                                self._multi_oplog_replayer.push(oplog)
-                                if self._multi_oplog_replayer.count() >= 1000:
-                                    self._multi_oplog_replayer.apply()
-                                    self._multi_oplog_replayer.clear()
-                                    self._last_optime = oplog['ts']
-                                    need_log = True
-                        else:
-                            self._dst.replay_oplog(oplog)
-                            self._last_optime = oplog['ts']
-                            need_log = True
-                    except StopIteration as e:
-                        if self._multi_oplog_replayer.count() > 0:
-                            self._multi_oplog_replayer.apply()
-                            self._multi_oplog_replayer.clear()
-                            self._last_optime = self._multi_oplog_replayer.last_optime()
-                            need_log = True
-                        # no more oplogs, wait a moment
-                        time.sleep(0.1)
-                        self._log_optime(self._last_optime)
-                        self._log_progress('latest')
-                    except pymongo.errors.AutoReconnect as e:
-                        log.error(e)
-                        self._src.reconnect()
-                        break
             except IndexError as e:
                 log.error(e)
                 log.error('%s not found, terminate' % self._last_optime)
+                return
+            except Exception as e:
+                log.error('get oplog cursor failed: %s' % e)
+                continue
+
+            # loop: read and apply oplog
+            while True:
+                try:
+                    if need_log:
+                        self._log_optime(self._last_optime)
+                        self._log_progress()
+                        need_log = False
+
+                    if not cursor.alive:
+                        log.error('cursor is dead')
+                        raise pymongo.errors.AutoReconnect
+
+                    oplog = cursor.next()
+                    n_total += 1
+
+                    # check start optime once
+                    if not start_optime_valid:
+                        if oplog['ts'] == self._last_optime:
+                            log.info('oplog is ok: %s' % self._last_optime)
+                            start_optime_valid = True
+                        else:
+                            log.error('oplog %s is stale, terminate' % self._last_optime)
+                            return
+
+                    if oplog['op'] == 'n':  # no-op
+                        self._last_optime = oplog['ts']
+                        need_log = True
+                        continue
+
+                    # validate oplog
+                    if not self._conf.data_filter.valid_oplog(oplog):
+                        n_skip += 1
+                        self._last_optime = oplog['ts']
+                        need_log = True
+                        continue
+
+                    dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
+                    dst_dbname, dst_collname = self._conf.db_coll_mapping(dbname, collname)
+                    if dst_dbname != dbname or dst_collname != collname:
+                        oplog['ns'] = '%s.%s' % (dst_dbname, dst_collname)
+
+                    if self._multi_oplog_replayer:
+                        # todo check collection has unique index
+                        if mongo_utils.is_command(oplog):
+                            self._multi_oplog_replayer.apply()
+                            self._multi_oplog_replayer.clear()
+                            self._dst.apply_oplog(oplog)
+                            self._last_optime = oplog['ts']
+                            need_log = True
+                        else:
+                            self._multi_oplog_replayer.push(oplog)
+                            if self._multi_oplog_replayer.count() >= 1000:
+                                self._multi_oplog_replayer.apply()
+                                self._multi_oplog_replayer.clear()
+                                self._last_optime = oplog['ts']
+                                need_log = True
+                    else:
+                        self._dst.apply_oplog(oplog)
+                        self._last_optime = oplog['ts']
+                        need_log = True
+
+                    if self._stage != Stage.OPLOG_SYNC:
+                        assert self._initial_sync_end_optime is not None
+                        if self._last_optime >= self._initial_sync_end_optime:
+                            self._stage = Stage.OPLOG_SYNC
+                except StopIteration as e:
+                    if self._multi_oplog_replayer and self._multi_oplog_replayer.count() > 0:
+                        self._multi_oplog_replayer.apply()
+                        self._multi_oplog_replayer.clear()
+                        self._last_optime = self._multi_oplog_replayer.last_optime()
+                        need_log = True
+                    # no more oplogs, wait a moment
+                    time.sleep(0.1)
+                    self._log_optime(self._last_optime)
+                    self._log_progress('latest')
+                except pymongo.errors.DuplicateKeyError as e:
+                    if self._stage == Stage.OPLOG_SYNC:
+                        log.error(e)
+                        log.error('terminate')
+                        return
+                    else:
+                        log.error('ignore duplicate key error: %s' % e)
+                        continue
+                except pymongo.errors.AutoReconnect as e:
+                    log.error(e)
+                    self._src.reconnect()
+                    break
+
+    def bulk_write(self, mc, dbname, collname, reqs):
+        """ Bulk write.
+        """
+        while True:
+            try:
+                mc[dbname][collname].bulk_write(reqs,
+                                                ordered=True,
+                                                bypass_document_validation=False)
+                return
+            except pymongo.errors.AutoReconnect as e:
+                log.error('%s' % e)
+                self.reconnect()
+            except Exception as e:
+                log.error('bulk write failed: %s' % e)
+                # retry to write one by one
+                for req in reqs:
+                    try:
+                        if isinstance(req, pymongo.ReplaceOne):
+                            mc[dbname][collname].replace_one(req._filter, req._doc, upsert=req._upsert)
+                        elif isinstance(req, pymongo.InsertOne):
+                            mc[dbname][collname].insert_one(req._doc)
+                        elif isinstance(req, pymongo.UpdateOne):
+                            mc[dbname][collname].update_one(req._filter, req._doc, upsert=req._upsert)
+                        elif isinstance(req, pymongo.DeleteOne):
+                            mc[dbname][collname].delete_one(req._filter)
+                        else:
+                            log.error('invalid req: %s' % req)
+                            sys.exit(1)
+                    except pymongo.errors.DuplicateKeyError as e:
+                        if self._stage == Stage.OPLOG_SYNC:
+                            # generally it's an odd oplog that program cannot process
+                            # so abort it and bugfix
+                            sys.exit(1)
+                        else:
+                            log.error('ignore duplicate key error: %s' % e)
+                    except Exception as e:
+                        log.error(e)
+                        sys.exit(1)
                 return
 
 
