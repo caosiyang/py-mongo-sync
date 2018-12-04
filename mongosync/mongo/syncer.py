@@ -60,9 +60,19 @@ class MongoSyncer(CommonSyncer):
                 options['partialFilterExpression'] = info['partialFilterExpression']
             if 'dropDups' in info:
                 options['dropDups'] = info['dropDups']
-            # create indexes before import documents, so not need 'background' option
+
+            ## create indexes before import documents, so not need 'background' option
             # if 'background' in info:
             #     options['background'] = info['background']
+
+            # for text index
+            if 'weights' in info:
+                options['weights'] = info['weights']
+            if 'default_language' in info:
+                options['default_language'] = info['default_language']
+            if 'language_override' in info:
+                options['language_override'] = info['language_override']
+
             self._dst.create_index(dst_dbname, dst_collname, format(keys), **options)
 
     def _sync_collection(self, namespace_tuple):
