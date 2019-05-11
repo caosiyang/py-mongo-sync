@@ -146,12 +146,7 @@ class MongoHandler(object):
                     else:
                         # create index
                         # insert into db.system.indexes
-                        # TODO error occured if field name has '.' in index key
-                        try:
-                            self._mc[dbname][collname].insert_one(oplog['o'])
-                        except Exception as e:
-                            log.error('%s: %s' % (e, oplog))
-                            raise e
+                        self._mc[dbname][collname].insert(oplog['o'], check_keys=False)
                 elif op == 'u':  # update
                     self._mc[dbname][collname].update(oplog['o2'], oplog['o'])
                 elif op == 'd':  # delete
