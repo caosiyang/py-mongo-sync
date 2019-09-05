@@ -1,4 +1,4 @@
 gevent==1.4.0
+toml==0.10.0
 mmh3==2.5.1
 pymongo==3.5.1
-toml==0.10.0

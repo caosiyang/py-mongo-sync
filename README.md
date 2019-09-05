@@ -1,7 +1,15 @@
 # py-mongo-sync
 
-An oplog based data sync tool for MongoDB written in Python.
-It's used to sync data from a replica set to another standalone/replica-set/sharded-cluster.
+It can be used to sync data from a replica set to another MongoDB deployment(standalone, replica-set or sharded-cluster).
+It's oplog-based and provides a realtime data sync.
+
+## Support
+
+- MongoDB 2.4
+- MongoDB 2.6
+- MongoDB 3.0
+- MongoDB 3.2
+- MongoDB 3.4
 
 ## Features
 
@@ -10,32 +18,77 @@ It's used to sync data from a replica set to another standalone/replica-set/shar
 - sync the specified collections
 - concurrent oplog replay
 
-
 ## Requirements
 
+See [requirements](./requirements.txt) for details.
+
 - gevent
-- mmh3
-- pymongo 3.0 or later
-
-    > Use pymongo 3.5.1 if your source MongoDB is version 2.4.  
-    > pymongo 3.6 adds support for MongoDB 3.6, drops support for CPython 3.3 (PyPy3 is still supported), and drops support for MongoDB versions older than 2.6.  
-    > Refer to [https://api.mongodb.com/python/3.6.0/changelog.html](https://api.mongodb.com/python/3.6.0/changelog.html).
-
 - toml
+- mmh3
+- pymongo
+
+    Always use pymongo 3.5.1.
+
+    refer to [https://api.mongodb.com/python/3.6.0/changelog.html](https://api.mongodb.com/python/3.6.0/changelog.html)
+
+    > Version 3.6 adds support for MongoDB 3.6, drops support for CPython 3.3 (PyPy3 is still supported), and drops support for MongoDB versions older than 2.6. If connecting to a MongoDB 2.4 server or older, PyMongo now throws a ConfigurationError.
 
 ## Notice
 
-- source is a replica set of MongoDB with version 2.4/3.0/3.2/3.4
-- ignore following databases
+- source **MUST** be a replica set
+- ignore system databases
     - admin
     - local
 - ignore system collections
     - system.\*
 - create users for destination manually if necessary
-- authenticate with superuser if source authentication is enabled
-- sync sharded-cluster by running a sync process for each shard, first of all, guarantee that balancer is off
+- suggest to authenticate with administrator if source enabled authentication
 - not support geospatial index
+- if you want to sync data from sharded-cluster(source)
+    - first, guarantee that balancer of source sharded-cluster is off
+    - then, start a seprate sync process on each shard
 
+## Configurations
+
+Use [TOML](https://github.com/toml-lang/toml) as configuration file format.
+
+### src
+Source config items.
+
+- src.hosts - hostportstr of a member of replica set
+- src.authdb - authentiction database
+- src.username - username
+- src.password - password
+
+### dst
+Destination config items.
+
+- MongoDB refer to [mongo_conf.toml](example/mongo_conf.toml)
+    - dst.mongo.hosts
+    - dst.mongo.authdb
+    - dst.mongo.username
+    - dst.mongo.password
+
+- Elasticsearch refer to [es_conf.toml](example/es_conf.toml)
+    - dst.type
+    - dst.hosts
+
+### sync
+Custom sync options.
+
+`sync.dbs` specfies the databases to sync.
+`sync.dbs.colls` specifies the collections to sync.
+
+- sync.dbs - databases to sync, sync all databases if not specify
+    - sync.dbs.db - source database name
+    - sync.dbs.rename_db - destination database name, stay the same if not specify
+    - sync.dbs.colls - collectons to sync, sync all collections if not specify
+
+`coll` in `sync.dbs.colls` element specifies the collection to sync.
+`fileds` in `sync.dbs.colls` element specifies the fields of current collection to sync.
+
+### log
+- log.filepath - log file path, write to stdout if empty or not set
 
 ## Usage 
 
@@ -85,48 +138,6 @@ optional arguments:
 
 ```
 
-
-## Configurations
-
-Use [TOML](https://github.com/toml-lang/toml) as configuration file format.
-
-### src
-Source config items.
-
-- src.hosts - hostportstr of a member of replica set
-- src.authdb - authentiction database
-- src.username - username
-- src.password - password
-
-### dst
-Destination config items.
-
-- MongoDB refer to [mongo_conf.toml](example/mongo_conf.toml)
-    - dst.mongo.hosts
-    - dst.mongo.authdb
-    - dst.mongo.username
-    - dst.mongo.password
-
-- Elasticsearch refer to [es_conf.toml](example/es_conf.toml)
-    - dst.type
-    - dst.hosts
-
-### sync
-Custom sync options.
-
-`sync.dbs` specfies the databases to sync.
-`sync.dbs.colls` specifies the collections to sync.
-
-- sync.dbs - databases to sync, sync all databases if not specify
-    - sync.dbs.db - source database name
-    - sync.dbs.rename_db - destination database name, stay the same if not specify
-    - sync.dbs.colls - collectons to sync, sync all collections if not specify
-
-`coll` in `sync.dbs.colls` element specifies the collection to sync.
-`fileds` in `sync.dbs.colls` element specifies the fields of current collection to sync.
-
-### log
-- log.filepath - log file path, write to stdout if empty or not set
 
 
 ## TODO List
