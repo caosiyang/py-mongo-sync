@@ -72,13 +72,13 @@ class MongoHandler(object):
                 log.error('%s' % e)
                 self.reconnect()
 
-    def bulk_write(self, dbname, collname, reqs):
-        """ Bulk write documents until success.
+    def bulk_write(self, dbname, collname, reqs, ordered=True, ignore_duplicate_key_error=False):
+        """ Bulk write until success.
         """
         while True:
             try:
                 self._mc[dbname][collname].bulk_write(reqs,
-                                                      ordered=True,
+                                                      ordered=ordered,
                                                       bypass_document_validation=False)
                 return
             except pymongo.errors.AutoReconnect as e:
@@ -86,36 +86,38 @@ class MongoHandler(object):
                 self.reconnect()
             except Exception as e:
                 log.error('bulk write failed: %s' % e)
-                self.locate_bulk_write_error(dbname, collname, reqs)
-                # if bulk write failed,
-                # generally it's an odd oplog that program cannot process
-                # so abort it and bugfix
-                sys.exit(1)
-
-    def locate_bulk_write_error(self, dbname, collname, reqs):
-        """ Write documents one by one to locate the error(s).
-        """
-        for req in reqs:
-            while True:
-                try:
-                    if isinstance(req, pymongo.ReplaceOne):
-                        self._mc[dbname][collname].replace_one(req._filter, req._doc, upsert=req._upsert)
-                    elif isinstance(req, pymongo.InsertOne):
-                        self._mc[dbname][collname].insert_one(req._doc)
-                    elif isinstance(req, pymongo.UpdateOne):
-                        self._mc[dbname][collname].update_one(req._filter, req._doc, upsert=req._upsert)
-                    elif isinstance(req, pymongo.DeleteOne):
-                        self._mc[dbname][collname].delete_one(req._filter)
-                    else:
-                        log.error('unknown operation type: %s' % req)
-                        sys.exit(1)
-                    break
-                except pymongo.errors.AutoReconnect as e:
-                    log.error('%s' % e)
-                    self.reconnect()
-                except Exception as e:
-                    log.error('%s when excuting %s on %s.%s' % (e, req, dbname, collname))
-                    sys.exit(1)
+                # retry to write one by one
+                for req in reqs:
+                    while True:
+                        try:
+                            if isinstance(req, pymongo.ReplaceOne):
+                                mc[dbname][collname].replace_one(req._filter, req._doc, upsert=req._upsert)
+                            elif isinstance(req, pymongo.InsertOne):
+                                mc[dbname][collname].insert_one(req._doc)
+                            elif isinstance(req, pymongo.UpdateOne):
+                                mc[dbname][collname].update_one(req._filter, req._doc, upsert=req._upsert)
+                            elif isinstance(req, pymongo.DeleteOne):
+                                mc[dbname][collname].delete_one(req._filter)
+                            else:
+                                log.error('invalid req: %s' % req)
+                                sys.exit(1)
+                            break
+                        except pymongo.errors.AutoReconnect as e:
+                            log.error('%s' % e)
+                            self.reconnect()
+                            continue
+                        except pymongo.errors.DuplicateKeyError as e:
+                            if ignore_duplicate_key_error:
+                                log.info('ignore duplicate key error: %s: %s' % (e, req))
+                                break
+                            else:
+                                log.error('%s: %s' % (e, req))
+                                sys.exit(1)
+                        except Exception as e:
+                            # generally it's an odd oplog that program cannot process
+                            # so abort it and bugfix
+                            log.error('%s when excuting %s on %s.%s' % (e, req, dbname, collname))
+                            sys.exit(1)
 
     def tail_oplog(self, start_optime=None, await_time_ms=None):
         """ Return a tailable curosr of local.oplog.rs from the specified optime.
@@ -132,14 +134,13 @@ class MongoHandler(object):
         #     cursor.max_await_time_ms(1000)
         return cursor
 
-    def apply_oplog(self, oplog):
-        """ Replay oplog.
+    def apply_oplog(self, oplog, ignore_duplicate_key_error=False):
+        """ Apply oplog.
         """
         dbname, collname = mongo_utils.parse_namespace(oplog['ns'])
         while True:
             try:
                 op = oplog['op']  # 'n' or 'i' or 'u' or 'c' or 'd'
-
                 if op == 'i':  # insert
                     if '_id' in oplog['o']:
                         self._mc[dbname][collname].replace_one({'_id': oplog['o']['_id']}, oplog['o'], upsert=True)
@@ -153,12 +154,13 @@ class MongoHandler(object):
                     self._mc[dbname][collname].delete_one(oplog['o'])
                 elif op == 'c':  # command
                     # FIX ISSUE #4 and #5
-                    # if use option '--colls' to sync target collections,
-                    # commands running on other collections in the same database may replay failed
+                    # if use '--colls' option to sync target collections,
+                    # running command that belongs to exclusive brother collections in the same database may failed.
+                    # Just skip it.
                     try:
                         self._mc[dbname].command(oplog['o'])
                     except pymongo.errors.OperationFailure as e:
-                        log.error('%s: %s' % (e, oplog))
+                        log.info('%s: %s' % (e, oplog))
                 elif op == 'n':  # no-op
                     pass
                 else:
@@ -166,8 +168,14 @@ class MongoHandler(object):
                 return
             except pymongo.errors.AutoReconnect as e:
                 self.reconnect()
+                continue
             except pymongo.errors.DuplicateKeyError as e:
-                raise e  # handle error in syncer
+                if ignore_duplicate_key_error:
+                    log.info('ignore duplicate key error: %s :%s' % (e, oplog))
+                    break
+                else:
+                    log.error('%s: %s' % (e, oplog))
+                    sys.exit(1)
             except pymongo.errors.WriteError as e:
                 log.error('%s' % e)
 

@@ -13,10 +13,15 @@ log = Logger.get()
 
 
 class Stage(object):
-    STOPPED = 0
-    INITIAL_SYNC = 1
-    POST_INITIAL_SYNC = 2
-    OPLOG_SYNC = 3
+    """
+    - post_initial_sync
+        Catching up oplogs until to time point that initial sync was done.
+        If unique index existed, duplicate key error might occur in this stage.
+    """
+    stopped = 0
+    initial_sync = 1
+    post_initial_sync = 2
+    oplog_sync = 3
 
 
 class CommonSyncer(object):
@@ -55,7 +60,8 @@ class CommonSyncer(object):
         self._initial_sync_start_optime = None
         self._initial_sync_end_optime = None
 
-        self._stage = Stage.STOPPED
+        self._stage = Stage.stopped
+        self._oplog_batchsize = 1000
 
     @property
     def from_to(self):
@@ -92,16 +98,18 @@ class CommonSyncer(object):
                 return
             start_optime = doc['ts']
             log.info('start timestamp is %s actually' % start_optime)
-            self._stage = Stage.OPLOG_SYNC
+            self._stage = Stage.oplog_sync
             self._replay_oplog(start_optime)
         else:
             # initial sync
+            log.info('step into stage: initial_sync')
             self._initial_sync_start_optime = get_optime(self._src.client())
-            self._stage = Stage.INITIAL_SYNC
-
+            self._stage = Stage.initial_sync
             self._initial_sync()
 
-            self._stage = Stage.POST_INITIAL_SYNC
+            # markup post initial sync
+            log.info('step into stage: post_initial_sync')
+            self._stage = Stage.post_initial_sync
             self._initial_sync_end_optime = get_optime(self._src.client())
 
             # oplog sync

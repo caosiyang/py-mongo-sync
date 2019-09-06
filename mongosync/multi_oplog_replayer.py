@@ -20,16 +20,16 @@ class OplogVector(object):
 class MultiOplogReplayer(object):
     """ Concurrent oplog replayer for MongoDB.
     """
-    def __init__(self, mc, n_writers=10, batch_size=40):
+    def __init__(self, mongo_handler, n_writers=10, batch_size=40):
         """
         Parameter:
           - n_writers: maximum coroutine count
           - batch_size: maximum oplog count in a batch, 40 is empiric value
         """
-        assert isinstance(mc, MongoHandler)
+        assert isinstance(mongo_handler, MongoHandler)
         assert n_writers > 0
         assert batch_size > 0
-        self._mc = mc
+        self._mongo_handler = mongo_handler  # type of MongoHandler
         self._pool = gevent.pool.Pool(n_writers)
         self._batch_size = batch_size
         self._map = {}
@@ -52,7 +52,7 @@ class MultiOplogReplayer(object):
         self._count += 1
         self._last_optime = oplog['ts']
 
-    def apply(self):
+    def apply(self, ignore_duplicate_key_error=False):
         """ Apply oplogs.
         """
         oplog_vecs = []
@@ -79,7 +79,11 @@ class MultiOplogReplayer(object):
 
         for vec in oplog_vecs:
             if vec._oplogs:
-                self._pool.spawn(self._mc.bulk_write, vec._dbname, vec._collname, vec._oplogs)
+                self._pool.spawn(self._mongo_handler.bulk_write,
+                                 vec._dbname,
+                                 vec._collname,
+                                 vec._oplogs,
+                                 ignore_duplicate_key_error=ignore_duplicate_key_error)
         self._pool.join()
 
     def count(self):
