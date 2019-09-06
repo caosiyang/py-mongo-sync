@@ -1,6 +1,42 @@
 import pymongo
 
 
+def gen_uri(hosts, username=None, password=None, authdb='admin'):
+    def parse(hosts):
+        if isinstance(hosts, str) or isinstance(hosts, unicode):
+            return hosts
+        if isinstance(hosts, list) or isinstance(hosts, tuple):
+            hostportstrs = []
+            for host in hosts:
+                if isinstance(host, str) or isinstance(host, unicode):
+                    hostportstrs.append(host)
+                    continue
+                if isinstance(host, tuple):
+                    hostportstrs.append(parse_tuple(host))
+                    continue
+            return ','.join(hostportstrs)
+        raise Exception('invalid hosts: %v' % hosts)
+
+    def parse_tuple(host_port_tuple):
+        """ host is string and port is int.
+        """
+        if not isinstance(host_port_tuple, tuple):
+            raise Exception('not a tuple: %s', (host_port_tuple,))
+        if len(host_port_tuple) != 2:
+            raise Exception('invalid tuple length: %s', (host_port_tuple,))
+        host, port = host_port_tuple
+        if not isinstance(host, str) and not isinstance(host, unicode):
+            raise Exception('invalid host in tuple: %s' % (host_port_tuple,))
+        if not isinstance(port, int):
+            raise Exception('invalid port in tuple: %s' % (host_port_tuple,))
+        return '%s:%d' % (host, port)
+
+    if username and password and authdb:
+        return 'mongodb://%s:%s@%s/%s' % (username, password, parse(hosts), authdb)
+    else:
+        return 'mongodb://%s' % parse(hosts)
+
+
 def connect(host, port, **kwargs):
     """ Connect and return a available handler.
     Recognize replica set automatically.

@@ -5,6 +5,15 @@ from mongosync.mongo_utils import get_version
 from mongosync.data_filter import DataFilter
 
 
+class CheckConfig(object):
+    def __init__(self):
+        self.src_uri = ''
+        self.dst_uri = ''
+        self.dbs = []
+        self.src_db = ''
+        self.dst_db = ''
+
+
 class MongoConfig(object):
     def __init__(self, hosts, authdb, username, password):
         self.hosts = hosts
