@@ -45,7 +45,7 @@ See [requirements](./requirements.txt) for details.
 - suggest to authenticate with administrator if source enabled authentication
 - not support geospatial index
 - if you want to sync data from sharded-cluster(source)
-    - first, guarantee that balancer of source sharded-cluster is off
+    - ~~first, guarantee that balancer of source sharded-cluster is off~~
     - then, start a seprate sync process on each shard
 
 ## Configurations
