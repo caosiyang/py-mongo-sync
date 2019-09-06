@@ -1,4 +1,5 @@
 import pymongo
+import bson
 
 
 def gen_uri(hosts, username=None, password=None, authdb='admin'):
@@ -53,16 +54,21 @@ def connect(host, port, **kwargs):
     w = kwargs.get('w', 1)
     replset_name = get_replica_set_name(host, port, **kwargs)
     if replset_name:
-        mc = pymongo.MongoClient(
-                host=host,
-                port=port,
-                connect=True,
-                serverSelectionTimeoutMS=3000,
-                replicaSet=replset_name,
-                read_preference=pymongo.read_preferences.ReadPreference.PRIMARY,
-                w=w)
+        mc = pymongo.MongoClient(host=host,
+                                 port=port,
+                                 document_class=bson.son.SON,
+                                 connect=True,
+                                 serverSelectionTimeoutMS=3000,
+                                 replicaSet=replset_name,
+                                 read_preference=pymongo.read_preferences.ReadPreference.PRIMARY,
+                                 w=w)
     else:
-        mc = pymongo.MongoClient(host, port, connect=True, serverSelectionTimeoutMS=3000, w=w)
+        mc = pymongo.MongoClient(host,
+                                 port,
+                                 document_class=bson.son.SON,
+                                 connect=True,
+                                 serverSelectionTimeoutMS=3000,
+                                 w=w)
     if username and password and authdb:
         # raise exception if auth failed here
         mc[authdb].authenticate(username, password)
