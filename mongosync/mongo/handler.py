@@ -125,7 +125,7 @@ class MongoHandler(object):
         # set codec options to guarantee the order of keys in command
         coll = self._mc['local'].get_collection('oplog.rs',
                                                 codec_options=bson.codec_options.CodecOptions(document_class=bson.son.SON))
-        cursor = coll.find({'ts': {'$gte': start_optime}},
+        cursor = coll.find({'fromMigrate': {'$exists': False}, 'ts': {'$gte': start_optime}},
                            cursor_type=pymongo.cursor.CursorType.TAILABLE_AWAIT,
                            no_cursor_timeout=True)
         # New in version 3.2
