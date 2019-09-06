@@ -108,7 +108,7 @@ class MongoSyncer(CommonSyncer):
                         reqs = []
                     if len(groups) == groups_max:
                         threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i], ordered=False, ignore_duplicate_key_error=True) for i in xrange(groups_max)]
-                        gevent.joinall(threads)
+                        gevent.joinall(threads, raise_error=True)
                         groups = []
 
                     n += 1
@@ -118,7 +118,7 @@ class MongoSyncer(CommonSyncer):
 
                 if len(groups) > 0:
                     threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i], ordered=False, ignore_duplicate_key_error=True) for i in xrange(len(groups))]
-                    gevent.joinall(threads)
+                    gevent.joinall(threads, raise_error=True)
                 if len(reqs) > 0:
                     self._dst.bulk_write(dst_dbname, dst_collname, reqs, ordered=False, ignore_duplicate_key_error=True)
 
@@ -209,7 +209,7 @@ class MongoSyncer(CommonSyncer):
                         reqs = []
                     if len(groups) == groups_max:
                         threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i], ordered=False, ignore_duplicate_key_error=True) for i in xrange(groups_max)]
-                        gevent.joinall(threads)
+                        gevent.joinall(threads, raise_error=True)
                         groups = []
 
                     n += 1
@@ -220,7 +220,7 @@ class MongoSyncer(CommonSyncer):
 
                 if len(groups) > 0:
                     threads = [gevent.spawn(self._dst.bulk_write, dst_dbname, dst_collname, groups[i], ordered=False, ignore_duplicate_key_error=True) for i in xrange(len(groups))]
-                    gevent.joinall(threads)
+                    gevent.joinall(threads, raise_error=True)
                 if len(reqs) > 0:
                     self._dst.bulk_write(dst_dbname, dst_collname, reqs, ordered=False, ignore_duplicate_key_error=True)
 

@@ -88,7 +88,7 @@ class EsSyncer(CommonSyncer):
                         actions = []
                     if len(groups) == groups_max:
                         threads = [gevent.spawn(self._dst.bulk_write, groups[i]) for i in xrange(groups_max)]
-                        gevent.joinall(threads)
+                        gevent.joinall(threads, raise_error=True)
                         groups = []
 
                     n += 1
@@ -97,7 +97,7 @@ class EsSyncer(CommonSyncer):
 
                 if len(groups) > 0:
                     threads = [gevent.spawn(self._dst.bulk_write, groups[i]) for i in xrange(len(groups))]
-                    gevent.joinall(threads)
+                    gevent.joinall(threads, raise_error=True)
                 if len(actions) > 0:
                     elasticsearch.helpers.bulk(client=self._dst.client(), actions=actions)
 
