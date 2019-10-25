@@ -226,7 +226,7 @@ class CommonSyncer(object):
         """ Check if large collection or not.
         """
         dbname, collname = namespace_tuple
-        return True if self._src.client()[dbname][collname].count() > self._large_coll_docs else False
+        return self._src.client()[dbname][collname].count() > self._large_coll_docs
 
     def _sync_large_collection(self, namespace_tuple):
         """ Sync large collection until success.
